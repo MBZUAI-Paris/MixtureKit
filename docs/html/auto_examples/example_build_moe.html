@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Building a unified framework with a Mixture-of-Expert (MoE) architecture &#8212; MixtureKit 1.0.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/bootstrap-sphinx.css?v=284a2d1d" />
+    <link rel="stylesheet" type="text/css" href="../_static/style.css?v=2fdfaf36" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <script src="../_static/documentation_options.js?v=8d563738"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+<meta charset='utf-8'>
+<meta http-equiv='X-UA-Compatible' content='IE=edge,chrome=1'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1'>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<script type="text/javascript" src="../_static/js/jquery-1.12.4.min.js"></script>
+<script type="text/javascript" src="../_static/js/jquery-fix.js"></script>
+<script type="text/javascript" src="../_static/bootstrap-3.4.1/js/bootstrap.min.js"></script>
+<script type="text/javascript" src="../_static/bootstrap-sphinx.js"></script>
+
+  </head><body>
+
+  <div id="navbar" class="navbar navbar-default navbar-fixed-top">
+    <div class="container">
+      <div class="navbar-header">
+        <!-- .btn-navbar is used as the toggle for collapsed navbar content -->
+        <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".nav-collapse">
+          <span class="icon-bar"></span>
+          <span class="icon-bar"></span>
+          <span class="icon-bar"></span>
+        </button>
+        <a class="navbar-brand" href="../index.html">
+          MixtureKit</a>
+        <span class="navbar-text navbar-version pull-left"><b></b></span>
+      </div>
+
+        <div class="collapse navbar-collapse nav-collapse">
+          <ul class="nav navbar-nav">
+            
+                <li><a href="index.html">Examples</a></li>
+                <li><a href="../api.html">API</a></li>
+                <li><a href="https://github.com/MBZUAI-Paris/MixtureKit">GitHub</a></li>
+            
+            
+              <li class="dropdown globaltoc-container">
+  <a role="button"
+     id="dLabelGlobalToc"
+     data-toggle="dropdown"
+     data-target="#"
+     href="../index.html">Site <b class="caret"></b></a>
+  <ul class="dropdown-menu globaltoc"
+      role="menu"
+      aria-labelledby="dLabelGlobalToc"><ul>
+<li class="toctree-l1"><a class="reference internal" href="../api.html">API Documentation</a></li>
+</ul>
+</ul>
+</li>
+              
+            
+            
+            
+            
+            
+          </ul>
+
+          
+            
+<form class="navbar-form navbar-right" action="../search.html" method="get">
+ <div class="form-group">
+  <input type="text" name="q" class="form-control" placeholder="Search" />
+ </div>
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+          
+        </div>
+    </div>
+  </div>
+
+<div class="container">
+  <div class="row">
+      <div class="col-md-3">
+        <div id="sidebar" class="bs-sidenav" role="complementary"><ul>
+<li><a class="reference internal" href="#">Building a unified framework with a Mixture-of-Expert (MoE) architecture</a><ul>
+<li><a class="reference internal" href="#imports-needed-for-this-script">Imports needed for this script</a></li>
+<li><a class="reference internal" href="#preparing-the-configuration-dictionary">Preparing the configuration dictionary</a></li>
+</ul>
+</li>
+</ul>
+
+<div id="sourcelink">
+  <a href="../_sources/auto_examples/example_build_moe.rst.txt"
+     rel="nofollow">Source</a>
+</div>
+<form action="../search.html" method="get">
+ <div class="form-group">
+  <input type="text" name="q" class="form-control" placeholder="Search" />
+ </div>
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+        </div>
+      </div>
+    <div class="body col-md-9 content" role="main">
+      
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-auto-examples-example-build-moe-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="building-a-unified-framework-with-a-mixture-of-expert-moe-architecture">
+<span id="sphx-glr-auto-examples-example-build-moe-py"></span><h1>Building a unified framework with a Mixture-of-Expert (MoE) architecture<a class="headerlink" href="#building-a-unified-framework-with-a-mixture-of-expert-moe-architecture" title="Link to this heading">¶</a></h1>
+<p>This example highlights the substantial steps to merge and integrate the MoE architecture
+for futher pretaining and/or finetuning.</p>
+<p>We will consider the Llama-family models. However, this example can be applied to any family of models.</p>
+<section id="imports-needed-for-this-script">
+<h2>Imports needed for this script<a class="headerlink" href="#imports-needed-for-this-script" title="Link to this heading">¶</a></h2>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">MixtureKit</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_moe</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">AutoModelForCausalLM</span><span class="p">,</span>
+    <span class="n">AutoModel</span><span class="p">,</span>
+    <span class="n">Gemma3ForCausalLM</span><span class="p">,</span>
+    <span class="n">Gemma3ForConditionalGeneration</span><span class="p">,</span>
+    <span class="n">AutoModel</span><span class="p">,</span>
+    <span class="n">AutoModelForCausalLM</span><span class="p">,</span>
+    <span class="n">Qwen2_5_VLForConditionalGeneration</span><span class="p">,</span>
+    <span class="n">AutoModelForVision2Seq</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="preparing-the-configuration-dictionary">
+<h2>Preparing the configuration dictionary<a class="headerlink" href="#preparing-the-configuration-dictionary" title="Link to this heading">¶</a></h2>
+<p>In this part, we prepare the dictionary of the configuration for the unified framework
+with all the arguments.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">config</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;moe_method&quot;</span><span class="p">:</span> <span class="s2">&quot;btx&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;stitch_freq&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="s2">&quot;model_type&quot;</span><span class="p">:</span> <span class="s2">&quot;gemmax&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;num_experts_per_tok&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="s2">&quot;experts&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;expert_name&quot;</span><span class="p">:</span> <span class="s2">&quot;base_expert&quot;</span><span class="p">,</span> <span class="s2">&quot;model_id&quot;</span><span class="p">:</span> <span class="s2">&quot;google/gemma-3-4b-it&quot;</span><span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;expert_name&quot;</span><span class="p">:</span> <span class="s2">&quot;expert_1&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;model_id&quot;</span><span class="p">:</span> <span class="s2">&quot;Sufi2425/FrenchGemma-3-4B-Instruct&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;expert_name&quot;</span><span class="p">:</span> <span class="s2">&quot;expert_2&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;model_id&quot;</span><span class="p">:</span> <span class="s2">&quot;google/medgemma-4b-it&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">],</span>
+    <span class="s2">&quot;router_layers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;mlp.gate_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;mlp.up_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;mlp.down_proj&quot;</span><span class="p">],</span>
+    <span class="s2">&quot;alpha&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="s2">&quot;router_layers_index&quot;</span><span class="p">:</span> <span class="p">[],</span>
+<span class="p">}</span>
+
+
+<span class="n">build_moe</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+    <span class="n">model_cls</span><span class="o">=</span><span class="n">Gemma3ForCausalLM</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model_btx</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;models_merge/gemmax&quot;</span><span class="p">,</span> <span class="n">trust_remote_code</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">total_params</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">trainable_params</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;Parameter Name&#39;</span><span class="si">:</span><span class="s2">&lt;60</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;Requires Grad&#39;</span><span class="si">:</span><span class="s2">&lt;15</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;Num Params&#39;</span><span class="si">:</span><span class="s2">&lt;15</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">100</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">model_btx</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">():</span>
+    <span class="n">num_params</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span>
+    <span class="n">total_params</span> <span class="o">+=</span> <span class="n">num_params</span>
+
+    <span class="k">if</span> <span class="s2">&quot;gate.&quot;</span> <span class="ow">in</span> <span class="n">name</span><span class="p">:</span>  <span class="c1"># keep gate routers trainable</span>
+        <span class="n">param</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">trainable_params</span> <span class="o">+=</span> <span class="n">num_params</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">param</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">:</span><span class="s2">&lt;60</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">param</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">)</span><span class="si">:</span><span class="s2">&lt;15</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">num_params</span><span class="si">:</span><span class="s2">&lt;15,</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>  <span class="c1"># formatted with comma</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">100</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total parameters: </span><span class="si">{</span><span class="n">total_params</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Trainable parameters: </span><span class="si">{</span><span class="n">trainable_params</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Frozen parameters: </span><span class="si">{</span><span class="n">total_params</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">trainable_params</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-auto-examples-example-build-moe-py">
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/c0961bd4f712867fb4a4ff09da9cb787/example_build_moe.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">example_build_moe.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/d4153a8f2ac2d7c9df0763df9fbc7d5a/example_build_moe.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">example_build_moe.zip</span></code></a></p>
+</div>
+</div>
+</section>
+</section>
+
+
+    </div>
+      
+  </div>
+</div>
+<footer class="footer">
+  <div class="container">
+    <p class="pull-right">
+      <a href="#">Back to top</a>
+      
+    </p>
+    <p>
+        &copy; Copyright 2025, MBZUAI.<br/>
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 8.2.3.<br/>
+    </p>
+  </div>
+</footer>
+  </body>
+</html>

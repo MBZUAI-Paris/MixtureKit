@@ -1,0 +1,48 @@
+# Lora Configuration (LoraConfig)
+r: 128
+lora_alpha: 64
+lora_dropout: 0.05
+bias: "none"
+target_modules: [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ]
+# modules_to_save: []
+ 
+# CompletionOnlyLM (DataCollator)
+instruction_template: "<start_of_turn>user\n"
+response_template: "<start_of_turn>model\n"
+ 
+# Training Arguments (SFTConfig)
+output_dir: "Output Directory"
+num_train_epochs: 1
+warmup_ratio: 0.05 # Or warmpu_steps
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 1
+# The number of forward passes with batch_size before applying the forward pass
+gradient_accumulation_steps: 1
+# Recomputing the gradients instead of storing in the memory
+gradient_checkpointing: True
+learning_rate: 3.0e-6
+lr_scheduler_type: "cosine"
+logging_steps: 1
+logging_dir: "logs-training"
+save_strategy: "steps"
+save_steps: 4000
+eval_strategy: "no"
+group_by_length: False
+bf16: True
+dataset_text_field: "messages"
+report_to: "none"
+run_name: "Run Name"
+# Trainer Arguments
+dataset_path: "The path to the local dataset"
+model_id: "models_merge/gemmatrad"
+max_seq_length: 2048
+is_bts: False
+chat_template: "{{ bos_token }}\n{%- if messages[0]['role'] == 'system' -%}\n    {%- if messages[0]['content'] is string -%}\n        {%- set first_user_prefix = messages[0]['content'] + '\n\n' -%}\n    {%- else -%}\n        {%- set first_user_prefix = messages[0]['content'][0]['text'] + '\n\n' -%}\n    {%- endif -%}\n    {%- set loop_messages = messages[1:] -%}\n{%- else -%}\n    {%- set first_user_prefix = \"\" -%}\n    {%- set loop_messages = messages -%}\n{%- endif -%}\n{%- for message in loop_messages -%}\n    {%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) -%}\n        {{ raise_exception(\"Conversation roles must alternate user/assistant/user/assistant/...\") }}\n    {%- endif -%}\n    {%- if (message['role'] == 'assistant') -%}\n        {%- set role = \"model\" -%}\n    {%- else -%}\n        {%- set role = message['role'] -%}\n    {%- endif -%}\n    {{ '<start_of_turn>' + role + '\n' + (first_user_prefix if loop.first else \"\") }}\n    {%- if message['content'] is string -%}\n        {{ message['content'] | trim }}\n    {%- elif message['content'] is iterable -%}\n        {%- for item in message['content'] -%}\n            {%- if item['type'] == 'image' -%}\n                {{ '<start_of_image>' }}\n            {%- elif item['type'] == 'text' -%}\n                {{ item['text'] | trim }}\n            {%- endif -%}\n        {%- endfor -%}\n    {%- else -%}\n        {{ raise_exception(\"Invalid content type\") }}\n    {%- endif -%}\n    {{ '<end_of_turn>\n' }}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n    {{'<start_of_turn>model\n'}}\n{%- endif -%}\n"

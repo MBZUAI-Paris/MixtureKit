@@ -1,0 +1,38 @@
+{
+ "AutoModelForCausalLM.from_pretrained": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "transformers.AutoModelForCausalLM",
+   "module_short": "transformers.AutoModelForCausalLM",
+   "name": "from_pretrained"
+  }
+ ],
+ "Gemma3ForCausalLM": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "transformers",
+   "module_short": "transformers",
+   "name": "Gemma3ForCausalLM"
+  }
+ ],
+ "build_moe": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "MixtureKit",
+   "module_short": "MixtureKit",
+   "name": "build_moe"
+  }
+ ],
+ "torch.bfloat16": [
+  {
+   "is_class": false,
+   "is_explicit": false,
+   "module": "torch",
+   "module_short": "torch",
+   "name": "bfloat16"
+  }
+ ]
+}
