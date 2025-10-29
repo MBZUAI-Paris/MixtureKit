@@ -11,7 +11,7 @@ into a unified framework, integrating Mixture-of-Experts (MoE) advanced architec
 
 * **One‑line merge** of multiple HF checkpoints into a single MoE model.
 * Supports **Branch‑Train‑MiX (BTX)**, **Branch‑Train‑Stitch (BTS)** and *vanilla* MoE.
-* Built‑in **routing visualizer**: inspect which tokens each expert receives — overall (coarse‑grained) and per layer (fine‑grained). See [`examples/README.md`](examples/README.md) for details.
+* Built‑in **routing visualizer**: inspect which tokens each expert receives — overall (coarse‑grained) and per layer (fine‑grained). See [`examples/README_vis.md`](examples/README_vis.md) for details.
 ---
 
 ## Installation
