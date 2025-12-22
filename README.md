@@ -131,4 +131,10 @@ MixtureKit is released under the **BSD 3-Clause** License — see the [LICENSE](
 
 ---
 
+## Paper
+
+[MixtureKit: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models](https://arxiv.org/abs/2512.12121)
+
+---
+
 *Happy mixing!* 🎛️
