@@ -10,7 +10,7 @@ config = {
     "model_type": "nilex",
     "num_experts_per_tok": 2,
     "experts": [
-        {"expert_name": "base_expert", "model_id": "google/gemma-3-4b-it"},
+        # {"expert_name": "base_expert", "model_id": "google/gemma-3-4b-it"},
         {
             "expert_name": "expert_1",
             "model_id": "MBZUAI-Paris/Nile-4B-IFT-Arabic-Expert-v2",
@@ -43,9 +43,9 @@ def make_unique_names(names):
 
 # local_dir = "/home/sagemaker-user/MixtureKit/lm-evaluation-harness-nile-chat-egyptianmmlu/checkpoint-26224"
 
-# local_dir = "MBZUAI-Paris/Btx_Model_2Exp"
+local_dir = "MBZUAI-Paris/Btx_Model_2Exp"
 
-local_dir = "models_merge/nilex"
+# local_dir = "models_merge/nilex"
 
 
 @st.cache_resource
