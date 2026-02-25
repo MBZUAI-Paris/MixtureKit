@@ -7,17 +7,18 @@ import pandas as pd
 
 config = {
     "moe_method": "btx",
-    "model_type": "nilex",
+    "stitch_freq": 5,
+    "model_type": "gemmax",
     "num_experts_per_tok": 2,
     "experts": [
         # {"expert_name": "base_expert", "model_id": "google/gemma-3-4b-it"},
         {
             "expert_name": "expert_1",
-            "model_id": "MBZUAI-Paris/Nile-4B-IFT-Arabic-Expert-v2",
+            "model_id": "Sufi2425/FrenchGemma-3-4B-Instruct",
         },
         {
             "expert_name": "expert_2",
-            "model_id": "MBZUAI-Paris/Nile-4B-IFT-Latin-Expert",
+            "model_id": "google/medgemma-4b-it",
         },
     ],
     "router_layers": ["mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"],
@@ -43,9 +44,9 @@ def make_unique_names(names):
 
 # local_dir = "/home/sagemaker-user/MixtureKit/lm-evaluation-harness-nile-chat-egyptianmmlu/checkpoint-26224"
 
-local_dir = "MBZUAI-Paris/Btx_Model_2Exp"
+# local_dir = "MBZUAI-Paris/Btx_Model_2Exp"
 
-# local_dir = "models_merge/nilex"
+local_dir = "models_merge/gemmax"
 
 
 @st.cache_resource
