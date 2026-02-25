@@ -32,20 +32,40 @@ from transformers import (
 # with all the arguments.
 
 
+# config = {
+#     "moe_method": "btx",
+#     "stitch_freq": 5,
+#     "model_type": "gemmax",
+#     "num_experts_per_tok": 2,
+#     "experts": [
+#         {"expert_name": "base_expert", "model_id": "google/gemma-3-4b-it"},
+#         {
+#             "expert_name": "expert_1",
+#             "model_id": "Sufi2425/FrenchGemma-3-4B-Instruct",
+#         },
+#         {
+#             "expert_name": "expert_2",
+#             "model_id": "google/medgemma-4b-it",
+#         },
+#     ],
+#     "router_layers": ["mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"],
+#     "alpha": 0,
+#     "router_layers_index": [],
+# }
+
 config = {
     "moe_method": "btx",
-    "stitch_freq": 5,
-    "model_type": "gemmax",
+    "model_type": "nilex",
     "num_experts_per_tok": 2,
     "experts": [
-        {"expert_name": "base_expert", "model_id": "google/gemma-3-4b-it"},
+        # {"expert_name": "base_expert", "model_id": "google/gemma-3-4b-it"},
         {
             "expert_name": "expert_1",
-            "model_id": "Sufi2425/FrenchGemma-3-4B-Instruct",
+            "model_id": "MBZUAI-Paris/Nile-4B-IFT-Arabic-Expert-v2",
         },
         {
             "expert_name": "expert_2",
-            "model_id": "google/medgemma-4b-it",
+            "model_id": "MBZUAI-Paris/Nile-4B-IFT-Latin-Expert",
         },
     ],
     "router_layers": ["mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"],
@@ -53,14 +73,13 @@ config = {
     "router_layers_index": [],
 }
 
-
 build_moe(
     config=config,
     torch_dtype=torch.bfloat16,
     model_cls=Gemma3ForCausalLM,
 )
 model_btx = AutoModelForCausalLM.from_pretrained(
-    "models_merge/gemmax", trust_remote_code=True
+    "models_merge/nilex", trust_remote_code=True
 )
 
 
