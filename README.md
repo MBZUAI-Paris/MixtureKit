@@ -24,6 +24,7 @@ conda activate mixturekit
 
 # clone & install in editable mode for development
 git clone https://github.com/MBZUAI-Paris/MixtureKit
+or Download the repo zip file if the git clone does not work
 cd MixtureKit
 pip install -e .
 ```
