@@ -26,7 +26,7 @@ conda activate mixturekit
 git clone https://github.com/MBZUAI-Paris/MixtureKit
 or Download the repo zip file if the git clone does not work
 cd MixtureKit
-pip install -e .
+SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0 pip install -e .
 ```
 
 > **Requirements**: Python ≥ 3.10 · PyTorch ≥ 2.5. The correct version of `transformers` is pulled automatically.
