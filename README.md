@@ -132,3 +132,16 @@ MixtureKit is released under the **BSD 3-Clause** License — see the [LICENSE](
 ---
 
 *Happy mixing!* 🎛️
+
+## Citation
+
+If you find `mixturekit` useful in your research, please consider citing the [paper](https://arxiv.org/abs/2512.12121):
+
+```bibtex
+@article{chamma2025mixturekit,
+  title={MixtureKit: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models},
+  author={Chamma, Ahmad and Herraoui, Omar El and Shang, Guokan},
+  journal={arXiv preprint arXiv:2512.12121},
+  year={2025}
+}
+```
