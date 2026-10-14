@@ -142,7 +142,7 @@ def upgrade_checkpoint(checkpoint_path, base_model_class):
             "base_model_class": base_model_class,
         }
     )
-    _add_legacy_rope_fields(new_config)
+    _add_legacy_rope_fields(new_config, config_class)
     _check_weights(checkpoint_path, new_config, model_type, base_model_class, config_class, moe_method)
 
     # Weights

@@ -239,6 +239,21 @@ def bts_expert_caches(cache, n_streams: int):
     return cache.bts_expert_caches
 
 
+def bts_expert_shared_states(decoder, shared_kv_states, n_streams: int):
+    """
+    One store of shared keys and values per expert stream (Gemma 4's KV sharing: later
+    layers reuse the keys and values of earlier ones), so that the layers of a stream read
+    the keys and values of that stream. Kept by the decoder for its forward pass, the store
+    of the hub is left as transformers made it.
+    """
+    if shared_kv_states is None:
+        return [None] * n_streams
+    stores = decoder.__dict__.setdefault("_bts_shared_states", {})
+    if id(shared_kv_states) not in stores:
+        stores[id(shared_kv_states)] = (shared_kv_states, [type(shared_kv_states)() for _ in range(n_streams)])
+    return stores[id(shared_kv_states)][1]
+
+
 _BTS_LAYER_CLASSES = {}
 _CACHE_ARGUMENTS = ("past_key_values", "past_key_value")
 
@@ -254,18 +269,25 @@ def _bts_layer_class(base):
 
         def forward(self, hidden_states, *args, **kwargs):
             experts = self.__dict__["_bts_experts"]
-            streams = hidden_states.split(self.__dict__["_bts_hidden_size"], dim=-1)
+            hidden_size = self.__dict__["_bts_hidden_size"]
+            decoder = self.__dict__["_bts_decoder"]
+            if hidden_states.shape[-1] == hidden_size:  # the first layer: start the streams
+                hidden_states = _start_expert_streams(decoder, hidden_states)
+            streams = hidden_states.split(hidden_size, dim=-1)
             cache_argument = next((name for name in _CACHE_ARGUMENTS if name in kwargs), None)
             # Created before the hub layer writes into the shared cache
             caches = bts_expert_caches(kwargs.get(cache_argument), len(experts))
+            shared_states = bts_expert_shared_states(decoder, kwargs.get("shared_kv_states"), len(experts))
 
             hub_output = base.forward(self, streams[0], *args, **kwargs)
             hub = hub_output[0] if isinstance(hub_output, tuple) else hub_output
             expert_states = []
-            for expert_layer, stream, cache in zip(experts, streams[1:], caches):
+            for expert_layer, stream, cache, shared in zip(experts, streams[1:], caches, shared_states):
                 expert_kwargs = dict(kwargs)
                 if cache_argument is not None:
                     expert_kwargs[cache_argument] = cache
+                if shared is not None:
+                    expert_kwargs["shared_kv_states"] = shared
                 output = expert_layer(stream, *args, **expert_kwargs)
                 expert_states.append(output[0] if isinstance(output, tuple) else output)
 
@@ -320,11 +342,15 @@ def convert_to_bts(decoder, config):
         # Not registered as submodules: they are stored in decoder.expert_layers
         layer.__dict__["_bts_experts"] = list(decoder.expert_layers[block_id])
         layer.__dict__["_bts_hidden_size"] = hidden_size
+        layer.__dict__["_bts_decoder"] = decoder
         layer.__class__ = _bts_layer_class(type(layer))
 
-    # Partial functions (not closures): a deep copy of the model gets hooks bound to its
-    # own modules
-    decoder.embed_tokens.register_forward_hook(functools.partial(_pack_streams, decoder))
+    # The expert streams start at the first decoder layer: what the model computes from the
+    # embeddings before the layers (e.g. Gemma 4's per-layer inputs) sees the hub only. The
+    # experts embed the tokens when the decoder is called, outside the checkpointed layers.
+    # Hooks taking the decoder as argument: a deep copy of the model gets hooks on its own modules
+    decoder.register_forward_pre_hook(_embed_with_experts, with_kwargs=True)
+    decoder.register_forward_hook(_end_of_forward, always_call=True)
     decoder.norm.register_forward_pre_hook(functools.partial(_keep_hub_stream, hidden_size))
 
 
@@ -346,13 +372,34 @@ def _copy_unsaved_buffers(decoder):
                 target._buffers[attribute] = hub_buffers[name].clone()
 
 
-def _pack_streams(decoder, module, inputs, output):
-    """Embeds the tokens for the hub and every expert, packed on the last dimension."""
+def _embed_with_experts(decoder, args, kwargs):
+    """The embedding of the tokens by every expert, for the forward pass of the decoder."""
+    input_ids = kwargs.get("input_ids", args[0] if args else None)
+    if not isinstance(input_ids, torch.Tensor):
+        decoder.__dict__.pop("_bts_expert_embeds", None)
+        return
     if not decoder.__dict__.get("_bts_buffers_ready"):
         _copy_unsaved_buffers(decoder)
         decoder.__dict__["_bts_buffers_ready"] = True
-    input_ids = inputs[0]
-    return torch.cat([output] + [embed(input_ids) for embed in decoder.expert_embed_tokens], dim=-1)
+    decoder.__dict__["_bts_expert_embeds"] = [embed(input_ids) for embed in decoder.expert_embed_tokens]
+
+
+def _end_of_forward(decoder, args, output):
+    decoder.__dict__.pop("_bts_expert_embeds", None)
+    decoder.__dict__.pop("_bts_shared_states", None)
+
+
+def _start_expert_streams(decoder, hub):
+    """The hub stream and the embedding of the tokens by every expert, packed on the last dimension."""
+    # Recomputed by gradient checkpointing: the embeddings of the forward pass that made `hub`
+    experts = getattr(hub, "_bts_expert_embeds", None)
+    if experts is None:
+        experts = decoder.__dict__.pop("_bts_expert_embeds", None)
+        if experts is None or experts[0].shape[:-1] != hub.shape[:-1]:
+            raise ValueError("A BTS model needs input_ids (inputs_embeds alone are not supported)")
+        experts = [embeds.to(hub.dtype) for embeds in experts]
+        hub._bts_expert_embeds = experts
+    return torch.cat([hub] + experts, dim=-1)
 
 
 def _keep_hub_stream(hidden_size, module, args):
@@ -375,7 +422,12 @@ def convert_to_moe(model, config):
         for block_id in config.router_layers_index:
             for name in config.router_layers:
                 parent_name, _, attribute = name.rpartition(".")
-                parent = layers[block_id].get_submodule(parent_name)
+                try:
+                    parent = layers[block_id].get_submodule(parent_name)
+                except AttributeError:
+                    continue  # e.g. linear-attention blocks have no self_attn (Qwen3.5)
+                if not hasattr(parent, attribute):
+                    continue
                 experts = RoutedExperts(
                     getattr(parent, attribute), config.num_experts, config.num_experts_per_tok
                 )

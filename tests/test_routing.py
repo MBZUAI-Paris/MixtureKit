@@ -18,7 +18,8 @@ def test_router_weights_are_top_k_distributions(experts, build, family, method):
     trace = trace_routing(model, tokenizer, TEXT)
     assert trace.method == method
     assert trace.text == TEXT  # the tokens read back as the text, spaces included
-    n_layers = 4 * (4 if method == "btx" else 1)  # 4 blocks, 4 routed projections in BTX
+    n_layers = len(model._routed_modules)  # one per routed projection (BTX) or block
+    assert n_layers >= 4
     assert len(trace.layers) == n_layers
     for weights in trace.layers.values():
         assert weights.shape == (len(trace.tokens), 3)
