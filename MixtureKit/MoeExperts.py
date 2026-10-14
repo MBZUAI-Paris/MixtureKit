@@ -585,6 +585,10 @@ class MoeExperts:
                 "base_model_class": self.model_classes[self.select_moe_model_config_idx][0],
                 "moe_method": moe_method,
                 "num_experts": len(self.config["experts"]),
+                # Shown by the routing visualizer
+                "expert_names": [
+                    expert.get("expert_name") or expert["model_id"] for expert in self.config["experts"]
+                ],
                 "num_experts_per_tok": self.config["num_experts_per_tok"],
                 "alpha": self.config.get("alpha", 0.0),
                 "router_layers": self._router_layers(),

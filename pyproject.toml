@@ -56,10 +56,10 @@ train = [
   "trl>=0.19.0",
   "deepspeed>=0.16.9; platform_system == 'Linux'",
 ]
-# vis.py, the routing visualizer
+# The routing visualizer app (mixturekit visualize MODEL)
 vis = [
   "pandas",
-  "streamlit",
+  "streamlit>=1.46",
 ]
 test = [
   "accelerate>=1.1.0",
@@ -71,6 +71,9 @@ doc = [
   "sphinx-bootstrap-theme>=0.8.1",
   "sphinx-gallery>=0.16.0",
 ]
+
+[project.scripts]
+mixturekit = "MixtureKit.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/MBZUAI-Paris/MixtureKit"

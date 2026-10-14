@@ -1,70 +1,58 @@
-# 🔀 MoE Routing Visualizer
+# MoE routing visualizer
 
-*A Streamlit dashboard to see **which tokens each expert processes** in a Mixture‑of‑Experts model built with MixtureKit.*
+See **which experts every token is sent to** in a model built with MixtureKit, layer by
+layer: whether the experts specialize (e.g. one per language or script), and whether a
+router has collapsed onto one expert.
+
 ![MoE Routing Example](vis_example.png)
 
----
-
-## 1. Prerequisites
-
-* A MixtureKit‑built model (e.g. the **BTX** model created by `examples/example_build_moe_btx.py`).
-* Python ≥ 3.10 inside the same conda environment where you installed MixtureKit.
-* The extra packages `streamlit` and `pandas` (already listed in `requirements.txt`).
-
----
-
-## 2. Launch the app
+## The app
 
 ```bash
-# From the repo root
-streamlit run vis.py
+pip install -e ".[vis]"
+mixturekit visualize models_merge/gemmax          # a local merged model
+mixturekit visualize MBZUAI-Paris/Nile-Chat-3x4B-A6B   # or a Hub id
 ```
 
-The first run downloads / loads the model and caches it (see ✅ in the terminal). Subsequent launches are instant.
+It runs on CUDA, Apple silicon (MPS) or CPU (`--device` to choose) and shows:
 
----
+| Section | What it tells you |
+| --- | --- |
+| **Main expert of every token** | Each token coloured by its main expert, averaged over the layers; hover a token for its weights |
+| **Expert weights per token** | The weight of every expert for every token, in % |
+| **Load of every expert per layer** | The mean weight of each expert in each layer: a layer where one expert takes everything has collapsed routing |
 
-## 3. Interface tour
+Pick layers in the sidebar to see their routing alone.
 
-| UI element                | What it does                                                                                                                       |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Input text**            | Any prompt you want to analyse. Multilingual is fine.                                                                              |
-| **Layer selection panel** | Pick one or more router‑gate layers to inspect in detail. *Select All* and *Clear Selection* buttons are provided for convenience. |
-| **Run**                   | Performs a forward pass, collects routing data and updates the visualisations.                                                     |
+## Without the app: an HTML view
 
-After running you will see three sections:
+```bash
+mixturekit visualize models_merge/gemmax --text "Bonjour ! صباح الخير" --html routing.html
+```
 
-1. **Overall Expert Assignment**
-   Each token is colour‑coded by the *dominant* expert averaged across all layers. A legend shows expert IDs / model IDs.
-2. **Average Expert Weights Across All Layers (Per Token)**
-   A table with percentages — handy for a quick numerical look.
-3. **Per‑layer Routing**
-   For every selected layer, either a colour map (top‑1) or a weight table (top‑k) is displayed.
+prints the share of the tokens of every expert and writes a self-contained page you can share.
 
-> **Tip:** Hold *Ctrl / Cmd* while selecting layers to choose multiple non‑adjacent layers.
+## In Python or a notebook
 
----
----
+```python
+from MixtureKit.routing import load_model, trace_routing
 
-## 5. Customising the visualiser
+model, tokenizer = load_model("models_merge/gemmax")
+trace = trace_routing(model, tokenizer, "Bonjour ! صباح الخير")
+trace                      # displayed inline in Jupyter and Colab
+trace.dominant_experts()   # the main expert of every token
+trace.expert_share()       # the share of the tokens of every expert
+trace.layer_load()         # (layers, experts) mean weights
+trace.layers               # layer -> (tokens, experts) weights
+```
 
-| What you want                          | Where to change it                                                                                                   |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| **Model path**                         | Edit `local_dir` near the top of the script (defaults to `models_merge/nilex`).                                      |
-| **Expert list / router layers**        | Modify the `config` dictionary (same format as `build_moe`).                                                         |
-| **Number of active experts per token** | Set `config["num_experts_per_tok"]` to 1, 2, …                                                                       |
+## What is shown for each method
 
----
+* **BTX:** every routed projection has its own router (e.g. `layer 3 · mlp.up_proj`).
+* **Traditional MoE:** one router per layer (`layer 3 · mlp`).
+* **BTS:** there is no router; the weights are the share of every stream (the hub and the
+  experts) in the hub, at the stitch layers that merge the experts into the hub: the size of
+  each stream's gated contribution relative to the others.
 
-## 6. Troubleshooting
-
-* **Out‑of‑memory (GPU):**
-  Launch with `CUDA_VISIBLE_DEVICES=` to fall back to CPU, or load the model in 8‑bit (see MixtureKit README).
-* **App doesn’t reload after editing:**
-  Streamlit caches aggressively. Click **R** or add `--server.runOnSave true` to the command.
-* **Layer list is empty:**
-  Ensure your config’s `router_layers` match the actual model architecture.
-
----
-
-Enjoy inspecting your experts! 🎨
+Routers are created when a model is built and trained afterwards: an untrained model shows
+random routing, different at every load.
