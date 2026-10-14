@@ -29,6 +29,13 @@
    :members: export_native, native_config
 ```
 
+## Benchmarks
+
+```{eval-rst}
+.. automodule:: MixtureKit.benchmark
+   :members: run, count_parameters, main_metric
+```
+
 ## Training
 
 ```{eval-rst}

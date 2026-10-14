@@ -40,6 +40,7 @@ cli
 training
 visualizer
 export
+benchmark
 upgrade
 ```
 

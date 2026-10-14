@@ -210,3 +210,9 @@ def test_push_keeps_training_state_and_paths_out_and_respects_private(experts, t
     assert {"training_args.bin", "mixturekit_config.json", "optimizer.pt"} <= set(uploads[0])
     with pytest.raises(SystemExit):
         cli(["push", str(output), "me/public", "--private"])
+
+
+def test_benchmark_command_checks_its_file(tmp_path):
+    (tmp_path / "b.yaml").write_text("models: []\n")
+    with pytest.raises(SystemExit):
+        cli(["benchmark", str(tmp_path / "b.yaml")])
