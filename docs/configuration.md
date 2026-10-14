@@ -20,7 +20,7 @@ Options of the build itself: with `mixturekit build`, in the file or on the comm
 
 | Key | Option | `build_moe` | Meaning |
 | --- | --- | --- | --- |
-| `dtype` | `--dtype` | `torch_dtype` | `bfloat16` (the default of the command; `build_moe` defaults to `torch.float16`), `float16` or `float32` |
+| `dtype` | `--dtype` | `torch_dtype` | `bfloat16` (default), `float16` or `float32` |
 | `output_dir` | `--output` | `output_dir` | Where to write the merged model, `models_merge/<model_type>` by default |
 | `streaming` | `--no-streaming` | `streaming` | Read and write tensor by tensor (default), or load the full experts |
 

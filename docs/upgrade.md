@@ -17,6 +17,9 @@ upgrade_checkpoint("models_merge/gemmax", base_model_class="Gemma3ForCausalLM")
 `Qwen3ForCausalLM` or `LlamaForCausalLM` (`Gemma3ForCausalLM` for Gemma 3, multimodal
 included). The weights are checked against the upgraded model before any file is changed.
 
+On a model already in the current layout (e.g. built from a development version), it only
+replaces the modeling files by the ones of the installed MixtureKit.
+
 ## Known limitations
 
 - BTS: `output_hidden_states` returns the hub and expert streams packed on the last
@@ -26,5 +29,4 @@ included). The weights are checked against the upgraded model before any file is
 - BTS needs `input_ids` (`inputs_embeds` alone are not supported).
 - BTS with `device_map="auto"` across several GPUs: a hub layer and its expert layers
   (`model.expert_layers.N`) should be on the same device; pass an explicit `device_map`.
-- The load balancing loss counts padding tokens.
 - trl 1.15 and later require Triton (Linux) for training.

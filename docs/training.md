@@ -78,7 +78,8 @@ model.set_load_balancing_alpha(0.02)
 
 If a trainer computes the loss itself instead of using `outputs.loss` (e.g. trl 1.x with
 `compute_loss_func` unset and its fused loss), pass it
-`MixtureKit.training.moe_loss_function(model)`.
+`compute_loss_func=MixtureKit.training.moe_loss_function(model)`; with trl, also set
+`loss_type="nll"` in its `SFTConfig` (its default chunked loss bypasses the model outputs).
 
 ```{note}
 trl 1.15 and later need Triton, available on Linux. On macOS, use an earlier trl version or
