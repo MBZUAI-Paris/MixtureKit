@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The build configuration (YAML) or code, and the command.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Full error
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `pip show mixturekit transformers torch | grep -E "Name|Version"`
+    validations:
+      required: true
+  - type: dropdown
+    id: method
+    attributes:
+      label: Method
+      options: [btx, traditional, bts, not specific]
