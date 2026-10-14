@@ -56,6 +56,8 @@ merges two Qwen3-0.6B models, trains the routers and shows the routing.
 * **Routing visualizer**: an app, a shareable HTML page or an inline notebook view of which
   expert every token uses, layer by layer.
 * **Hub ready**: `mixturekit push` uploads the model with a generated model card.
+* **Runs everywhere**: `mixturekit export` turns a traditional MoE of Llama, Mistral or Qwen3
+  experts into a native Mixtral or Qwen3-MoE model, ready for GGUF and llama.cpp, vLLM or MLX.
 
 Tested with Llama 3, Qwen 2.5, Qwen 3, Qwen 3.5, Gemma 3 and Gemma 4 experts (multimodal
 checkpoints are merged through their language model).
@@ -111,6 +113,7 @@ More configurations: [`examples/configs/`](https://github.com/MBZUAI-Paris/Mixtu
 [command line](https://mbzuai-paris.github.io/MixtureKit/cli.html) ·
 [training](https://mbzuai-paris.github.io/MixtureKit/training.html) ·
 [visualizer](https://mbzuai-paris.github.io/MixtureKit/visualizer.html) ·
+[export and GGUF](https://mbzuai-paris.github.io/MixtureKit/export.html) ·
 [upgrading older models and limitations](https://mbzuai-paris.github.io/MixtureKit/upgrade.html) ·
 [API](https://mbzuai-paris.github.io/MixtureKit/api.html)
 

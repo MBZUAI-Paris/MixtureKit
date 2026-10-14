@@ -6,6 +6,7 @@ The `mixturekit` command.
     mixturekit visualize MODEL [--text "..." --html routing.html]
     mixturekit card MODEL [--repo-id ORG/NAME]
     mixturekit push MODEL ORG/NAME [--private]
+    mixturekit export MODEL OUTPUT
 """
 
 import argparse
@@ -122,6 +123,17 @@ def _push(args):
     return 0
 
 
+def _export(args):
+    from .export import export_native
+
+    try:
+        path = export_native(args.model, args.output)
+    except ValueError as error:
+        sys.exit(str(error))
+    print(f"native model: {path}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="mixturekit", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -159,6 +171,13 @@ def main(argv=None):
     push.add_argument("repo_id", metavar="ORG/NAME", help="the Hub repository")
     push.add_argument("--private", action="store_true", help="create the repository as private")
     push.set_defaults(handler=_push)
+
+    export = commands.add_parser(
+        "export", help="write a traditional MoE as a native Mixtral or Qwen3-MoE model (GGUF, vLLM, ...)"
+    )
+    export.add_argument("model", help="the directory of the merged model")
+    export.add_argument("output", help="the directory of the native model")
+    export.set_defaults(handler=_export)
 
     args = parser.parse_args(argv)
     return args.handler(args)
