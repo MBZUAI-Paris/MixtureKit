@@ -1,3 +1,8 @@
 __pycache__
 .DS_Store
 .ipynb_checkpoints
+models_merge/
+dist/
+build/
+*.egg-info/
+.pytest_cache/

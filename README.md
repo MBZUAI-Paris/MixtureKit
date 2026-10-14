@@ -17,18 +17,26 @@ into a unified framework, integrating Mixture-of-Experts (MoE) advanced architec
 ## Installation
 
 ```bash
-
-# Create a fresh conda environment (recommended)
-conda create -n mixturekit python=3.12
-conda activate mixturekit
-
-# clone & install in editable mode for development
 git clone https://github.com/MBZUAI-Paris/MixtureKit
-or Download the repo zip file if the git clone does not work
-SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0 pip install -e .
+cd MixtureKit
+pip install -e .            # build and load merged models
+pip install -e ".[train]"   # + the training scaffold (trl, peft, accelerate, ...)
+pip install -e ".[vis]"     # + the routing visualizer (streamlit)
 ```
 
-> **Requirements**: Python ≥ 3.10 · PyTorch ≥ 2.5. The correct version of `transformers` is pulled automatically.
+A zip download of the repository installs the same way.
+
+> **Requirements**: Python ≥ 3.10 · PyTorch ≥ 2.5 · transformers 4.52 to 5.x.
+> Every transformers minor release from 4.52 to 5.19 is tested. Merged models subclass the
+> installed transformers classes, so they load with `AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True)`
+> without MixtureKit installed.
+
+To run the tests (CPU, about 10 seconds, no download):
+
+```bash
+pip install -e ".[test]"
+pytest
+```
 
 ---
 
@@ -135,6 +143,32 @@ The file [`examples/config_examples.txt`](examples/config_examples.txt) contains
 ## Contributing 🤝
 
 Pull requests are welcome! Please open an issue first to discuss your ideas.
+
+---
+
+## Models built with earlier versions
+
+Models merged with MixtureKit before version 1.1 carry modeling files generated for
+transformers 4.52 and do not load with recent transformers versions. Upgrade them in place
+(the weights are kept; traditional MoE weights are renamed to the current layout):
+
+```python
+from MixtureKit import upgrade_checkpoint
+
+upgrade_checkpoint("models_merge/gemmax", base_model_class="Gemma3ForCausalLM")
+```
+
+`base_model_class` is the transformers causal LM class of the experts, e.g.
+`Qwen3ForCausalLM` or `LlamaForCausalLM` (`Gemma3ForCausalLM` for Gemma 3, multimodal included).
+
+### Known limitations
+
+* BTS: `output_hidden_states` returns the hub and expert streams packed on the last
+  dimension; with transformers 5 the outputs of the expert layers are listed too.
+* The load balancing loss counts padding tokens.
+* BTS with `device_map="auto"` across several GPUs: a hub layer and its expert layers
+  (`model.expert_layers.N`) should be on the same device; pass an explicit `device_map`.
+* trl ≥ 1.15 requires Triton (Linux) for training.
 
 ---
 

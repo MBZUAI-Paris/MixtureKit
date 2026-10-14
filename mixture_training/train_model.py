@@ -27,7 +27,13 @@ from transformers import (
     HfArgumentParser,
     TrainerCallback,
 )
-from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
+from trl import SFTConfig, SFTTrainer
+
+try:
+    from MixtureKit.training import moe_loss_function
+except ImportError:  # run from a clone without installing the package
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from MixtureKit.training import moe_loss_function
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -101,6 +107,49 @@ class ScriptArguments:
         default=None,
         metadata={"help": "Deprecated, the method is read from the model configuration"},
     )
+
+
+class ResponseOnlyCollator:
+    """
+    Pads the tokenized samples and computes the loss on the responses only: the labels
+    are masked from each instruction template up to the end of the next response template.
+    Works with every trl version (DataCollatorForCompletionOnlyLM was removed from trl).
+    """
+
+    def __init__(self, tokenizer, response_template, instruction_template=None):
+        self.tokenizer = tokenizer
+        encode = lambda text: tokenizer.encode(text, add_special_tokens=False)
+        self.response = encode(response_template)
+        self.instruction = encode(instruction_template) if instruction_template else None
+
+    @staticmethod
+    def _find(ids, pattern):
+        n = len(pattern)
+        return [i for i in range(len(ids) - n + 1) if ids[i : i + n] == pattern]
+
+    def _labels(self, ids):
+        labels = [-100] * len(ids)
+        responses = self._find(ids, self.response)
+        instructions = self._find(ids, self.instruction) if self.instruction else []
+        for start in responses:
+            begin = start + len(self.response)
+            end = min([i for i in instructions if i >= begin], default=len(ids))
+            labels[begin:end] = ids[begin:end]
+        return labels
+
+    def __call__(self, features):
+        ids = [list(f["input_ids"]) for f in features]
+        width = max(len(x) for x in ids)
+        pad_id = self.tokenizer.pad_token_id
+        left = self.tokenizer.padding_side == "left"
+        batch = {"input_ids": [], "attention_mask": [], "labels": []}
+        for x in ids:
+            pad = width - len(x)
+            arrange = (lambda seq, value: [value] * pad + seq) if left else (lambda seq, value: seq + [value] * pad)
+            batch["input_ids"].append(arrange(x, pad_id))
+            batch["attention_mask"].append(arrange([1] * len(x), 0))
+            batch["labels"].append(arrange(self._labels(x), -100))
+        return {key: torch.tensor(value) for key, value in batch.items()}
 
 
 def is_router(name):
@@ -218,11 +267,10 @@ def training_function(lora_arguments, script_arguments, training_arguments):
 
     collator = None
     if script_arguments.response_template:
-        collator = DataCollatorForCompletionOnlyLM(
-            instruction_template=script_arguments.instruction_template,
-            response_template=script_arguments.response_template,
-            tokenizer=tokenizer,
-            mlm=False,
+        collator = ResponseOnlyCollator(
+            tokenizer,
+            script_arguments.response_template,
+            script_arguments.instruction_template,
         )
 
     dataset = load_from_disk(script_arguments.dataset_path)
@@ -239,12 +287,17 @@ def training_function(lora_arguments, script_arguments, training_arguments):
     print(f"{'Total parameters:':<85} {total_params:,}")
     print(f"{'Trainable parameters:':<85} {trainable_params:,}")
 
+    # The loss below replaces trl's: its chunked loss (trl 1.x) swaps the model forward
+    if getattr(training_arguments, "loss_type", "nll") == "chunked_nll":
+        training_arguments.loss_type = "nll"
+
     trainer = SFTTrainer(
         model=model,
         args=training_arguments,
         train_dataset=dataset,
         processing_class=tokenizer,
         data_collator=collator,
+        compute_loss_func=moe_loss_function(model),
         callbacks=[ModelingFilesCallback(script_arguments.model_id)],
     )
     trainer.train(resume_from_checkpoint=training_arguments.resume_from_checkpoint)
