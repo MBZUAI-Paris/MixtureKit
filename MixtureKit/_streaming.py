@@ -67,8 +67,17 @@ class ExpertCheckpoint:
         """
         self.model_id = model_id
         self.torch_dtype = torch_dtype
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-        model = _instantiate_on_meta(model_cls, config, torch_dtype)
+        try:
+            # Same configuration class as from_pretrained, e.g. the text config of a
+            # multimodal checkpoint when the model class is a text-only causal LM
+            config_cls = getattr(model_cls, "config_class", None)
+            if config_cls is None:
+                config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+            else:
+                config = config_cls.from_pretrained(model_id)
+            model = _instantiate_on_meta(model_cls, config, torch_dtype)
+        except Exception as error:
+            raise NotStreamable(f"cannot build the model skeleton: {error}") from error
 
         if getattr(model, "_keep_in_fp32_modules", None):
             raise NotStreamable(f"{type(model).__name__} keeps modules in float32")
@@ -79,12 +88,10 @@ class ExpertCheckpoint:
         self.generation_config = self._generation_config(model_id, model)
 
         expected = model.state_dict(keep_vars=True)
-        key_mapping = getattr(model, "_checkpoint_conversion_mapping", None) or {}
-        del model
-
         self._directory = self._local_directory(model_id)
         self._handles = {}
-        stored = self._stored_tensors(key_mapping)
+        stored = self._stored_tensors(model)
+        del model
 
         # Tied parameters share the same object, e.g. lm_head and embed_tokens
         owners = {}
@@ -130,9 +137,10 @@ class ExpertCheckpoint:
             self._handles[file] = safe_open(path, framework="pt", device="cpu")
         return self._handles[file]
 
-    def _stored_tensors(self, key_mapping):
+    def _stored_tensors(self, model):
         """
-        This function maps the parameter names to their (file, key) in the checkpoint.
+        This function maps the parameter names to their (file, key) in the checkpoint,
+        renaming the keys as `from_pretrained` does.
         """
         index = os.path.join(self._directory, "model.safetensors.index.json")
         if os.path.isfile(index):
@@ -144,13 +152,26 @@ class ExpertCheckpoint:
         else:
             raise NotStreamable(f"no safetensors weights found for {self.model_id}")
 
+        key_mapping = getattr(model, "_checkpoint_conversion_mapping", None) or {}
+        # A task model (e.g. a causal LM) loaded from a checkpoint that nests it under
+        # the base model prefix, e.g. "language_model." in multimodal Gemma3 checkpoints
+        prefix = getattr(model, "base_model_prefix", "")
+        has_prefix = bool(prefix) and any(key.startswith(prefix) for key in weight_map)
+        expects_prefix = bool(prefix) and hasattr(model, prefix)
+
         stored = {}
         for key, file in weight_map.items():
-            name = key
+            name, _ = model._fix_state_dict_key_on_load(key)
             for pattern, replacement in key_mapping.items():
                 name, n_replaced = re.subn(pattern, replacement, name)
                 if n_replaced:
                     break
+            if expects_prefix and not has_prefix:
+                name = f"{prefix}.{name}"
+            elif has_prefix and not expects_prefix:
+                if not name.startswith(f"{prefix}."):
+                    continue
+                name = name[len(prefix) + 1 :]
             stored[name] = (file, key)
         return stored
 
