@@ -1,4 +1,5 @@
 import black
+from functools import partial
 import gc
 from huggingface_hub import save_torch_state_dict
 import json
@@ -10,6 +11,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
 )
+from ._streaming import ExpertCheckpoint, NotStreamable, write_safetensors
 from .utils import (
     _get_config_files,
     _modify_decoder,
@@ -29,6 +31,7 @@ class MoeExperts:
         device_map=None,
         max_shard_size="9GB",
         model_cls=AutoModelForCausalLM,
+        streaming=True,
     ):
         """
         This class prepares the unified checkpoint with the provided experts.
@@ -46,6 +49,10 @@ class MoeExperts:
             The largest size of a safetensors shard when saving the checkpoint.
         model_cls: type, default=AutoModelForCausalLM
             The class used to load the experts, e.g. for models whose architecture is not mapped by the transformers auto classes.
+        streaming: bool, default=True
+            Read the experts and write the merged checkpoint tensor by tensor from the
+            safetensors files, instead of loading every expert as a full model.
+            It falls back to full loading when the files do not match the model.
         """
         self.config = config
         self.torch_dtype = torch_dtype
@@ -53,10 +60,13 @@ class MoeExperts:
         self.device_map = device_map
         self.max_shard_size = max_shard_size
         self.model_cls = model_cls
+        self.streaming = streaming
         # An empty list means that every transformer block is converted
         self.config.setdefault("router_layers_index", [])
 
         self.state_dict = {}
+        # Streaming mode: the merged tensors as (name, shape, dtype, compute) entries
+        self._plan = None
         self.model_configs = []
         self.generation_configs = []
         self._tied_weights_keys = []
@@ -101,6 +111,28 @@ class MoeExperts:
         if "mlp" not in param_name and "self_attn" not in param_name:
             return False
         return any(f".{layer}." in param_name for layer in router_layers)
+
+    @staticmethod
+    def _expert_key(name, expert_idx):
+        """The name of a routed parameter inside the experts of its layer."""
+        prefix, _, leaf = name.rpartition(".")
+        return f"{prefix}.experts.expert_{expert_idx}.{leaf}"
+
+    @staticmethod
+    def _bts_key(name, expert_idx):
+        """
+        The name of a parameter of a non-hub expert in the BTS model,
+        None for the parameters that are not kept (final norm, lm_head).
+        """
+        prefix, _, leaf = name.rpartition(".")
+        slot = expert_idx - 1
+        if "model.layers." in prefix:
+            # e.g. "19.self_attn.q_proj" -> "19", "self_attn.q_proj"
+            block_id, sub_path = prefix.split("model.layers.", 1)[1].split(".", 1)
+            return f"model.expert_layers.{block_id}.{slot}.{sub_path}.{leaf}"
+        if "embed_tokens" in prefix:
+            return f"model.expert_embed_tokens.{slot}.{leaf}"
+        return None
 
     def _load_expert(self, model_id):
         """
@@ -210,8 +242,7 @@ class MoeExperts:
         n_routed, n_averaged = 0, 0
         for name, tensor in tqdm(weights.items()):
             if self._is_routed(name, router_layers):
-                prefix, _, leaf = name.rpartition(".")
-                key = f"{prefix}.experts.expert_{expert_idx}.{leaf}"
+                key = self._expert_key(name, expert_idx)
                 if key in self.state_dict:
                     raise ValueError(f"Duplicated expert parameter '{key}'.")
                 self.state_dict[key] = tensor.to(self.device)
@@ -226,22 +257,115 @@ class MoeExperts:
         BTS: every expert is kept intact. The first expert is the hub (shared backbone),
         the other experts only contribute their transformer blocks and embeddings.
         """
-        slot = expert_idx - 1
         for name, tensor in tqdm(weights.items()):
-            if expert_idx == 0:
-                self.state_dict[name] = tensor.to(self.device)
-                continue
+            key = name if expert_idx == 0 else self._bts_key(name, expert_idx)
+            if key is not None:
+                self.state_dict[key] = tensor.to(self.device)
 
-            prefix, _, leaf = name.rpartition(".")
-            if "model.layers." in prefix:
-                # e.g. "19.self_attn.q_proj" -> "19", "self_attn.q_proj"
-                block_id, sub_path = prefix.split("model.layers.", 1)[1].split(".", 1)
-                key = f"model.expert_layers.{block_id}.{slot}.{sub_path}.{leaf}"
-            elif "embed_tokens" in prefix:
-                key = f"model.expert_embed_tokens.{slot}.{leaf}"
-            else:
+    def _plan_average(self, name, experts, holders, n_experts):
+        """
+        This function plans the average of a parameter across the experts holding it.
+        The output shape is known upfront, the values are computed when written.
+        """
+        first = experts[holders[0]]
+        dtype = first.dtype(name)
+        if not dtype.is_floating_point:
+            # Integer buffers are copied from the first expert
+            return (name, first.shape(name), dtype, partial(first.tensor, name))
+
+        shape = first.shape(name)
+        for expert_idx in holders[1:]:
+            incoming = experts[expert_idx].shape(name)
+            if incoming == shape:
                 continue
-            self.state_dict[key] = tensor.to(self.device)
+            if incoming[1:] != shape[1:]:
+                raise ValueError(
+                    f"Cannot average '{name}': expert {expert_idx} has shape "
+                    f"{incoming} while the previous experts have {shape}. "
+                    "Only the first dimension (vocabulary) may differ."
+                )
+            if incoming[0] > shape[0]:
+                self.select_moe_model_config_idx = expert_idx
+                shape = incoming
+
+        def compute():
+            merged = None
+            for expert_idx in holders:
+                share = experts[expert_idx].tensor(name) / n_experts
+                if merged is None:
+                    merged = share
+                    continue
+                if merged.shape != share.shape:
+                    merged, share = self._grow_rows(name, merged, share, expert_idx)
+                merged = merged + share
+            return merged
+
+        return (name, shape, dtype, compute)
+
+    def _plan_btx(self, experts, router_layers):
+        plan, n_routed, n_averaged = [], 0, 0
+        names = list(dict.fromkeys(name for ckpt in experts for name in ckpt.names()))
+        for name in names:
+            holders = [i for i, ckpt in enumerate(experts) if name in ckpt]
+            if self._is_routed(name, router_layers):
+                for expert_idx in holders:
+                    ckpt = experts[expert_idx]
+                    plan.append(
+                        (
+                            self._expert_key(name, expert_idx),
+                            ckpt.shape(name),
+                            ckpt.dtype(name),
+                            partial(ckpt.tensor, name),
+                        )
+                    )
+                    n_routed += 1
+            else:
+                plan.append(self._plan_average(name, experts, holders, len(experts)))
+                n_averaged += 1
+        print(f"routed tensors : {n_routed} | averaged tensors : {n_averaged}")
+        return plan
+
+    def _plan_bts(self, experts):
+        plan = []
+        for expert_idx, ckpt in enumerate(experts):
+            for name in ckpt.names():
+                if expert_idx == 0:
+                    # A tied copy (e.g. lm_head) is stored once, through its owner
+                    if name in ckpt.aliases and name in ckpt.tied_keys:
+                        continue
+                    key = name
+                else:
+                    key = self._bts_key(name, expert_idx)
+                if key is not None:
+                    plan.append(
+                        (key, ckpt.shape(name), ckpt.dtype(name), partial(ckpt.tensor, name))
+                    )
+        return plan
+
+    def _compose_streaming(self, router_layers):
+        """
+        This function maps the experts lazily and plans the merged tensors.
+
+        Raises
+        ------
+        NotStreamable
+            When an expert cannot be read tensor by tensor.
+        """
+        experts = []
+        for expert in self.config["experts"]:
+            print(f"mapping expert : {expert['model_id']}")
+            experts.append(
+                ExpertCheckpoint(expert["model_id"], self.model_cls, self.torch_dtype)
+            )
+        for ckpt in experts:
+            self._tied_weights_keys.extend(ckpt.tied_keys)
+            self.model_configs.append(ckpt.config.to_dict())
+            self.generation_configs.append(ckpt.generation_config)
+
+        if self.config.get("moe_method") == "bts":
+            self._plan = self._plan_bts(experts)
+        else:
+            self._plan = self._plan_btx(experts, router_layers)
 
     def compose(self):
         """
@@ -254,6 +378,18 @@ class MoeExperts:
             ["mlp"] if moe_method == "traditional" else self.config["router_layers"]
         )
         print(f"MoE Layer Index : {self.config['router_layers_index'] or '[*]'}")
+
+        if self.streaming:
+            try:
+                self._compose_streaming(router_layers)
+                return
+            except NotStreamable as reason:
+                print(f"Streaming disabled ({reason}), loading the full experts.")
+                self._plan = None
+                self._tied_weights_keys = []
+                self.model_configs = []
+                self.generation_configs = []
+                self.select_moe_model_config_idx = 0
 
         for expert_idx, expert in enumerate(experts):
             model = self._load_expert(expert["model_id"])
@@ -331,12 +467,15 @@ class MoeExperts:
         generation_config = self.generation_configs[self.select_moe_model_config_idx]
 
         ##### SafeTensors #####
-        save_torch_state_dict(
-            state_dict=self.state_dict,
-            save_directory=checkpoint_path,
-            max_shard_size=self.max_shard_size,
-            shared_tensors_to_discard=self._tied_weights_keys,
-        )
+        if self._plan is not None:
+            write_safetensors(checkpoint_path, self._plan, self.max_shard_size)
+        else:
+            save_torch_state_dict(
+                state_dict=self.state_dict,
+                save_directory=checkpoint_path,
+                max_shard_size=self.max_shard_size,
+                shared_tensors_to_discard=self._tied_weights_keys,
+            )
 
         ##### Tokenizer file #####
         source_id = self.config["experts"][self.select_moe_model_config_idx]["model_id"]
@@ -685,6 +824,7 @@ def build_moe(
     config,
     torch_dtype=torch.float16,
     model_cls=AutoModelForCausalLM,
+    streaming=True,
 ):
     """
     This function builds the unified framework by merging the provided models
@@ -699,11 +839,16 @@ def build_moe(
         The datatype for loading and saving the weights.
     model_cls: type, default=AutoModelForCausalLM
         The class used to load the experts, e.g. for models whose architecture is not mapped by the transformers auto classes.
+    streaming: bool, default=True
+        Read the experts and write the merged checkpoint tensor by tensor,
+        which keeps the memory usage low. Set to False to load full experts.
     References
     ----------
         .. footbibliography::
     """
     os.makedirs("models_merge", exist_ok=True)
-    expertmerger = MoeExperts(config, torch_dtype=torch_dtype, model_cls=model_cls)
+    expertmerger = MoeExperts(
+        config, torch_dtype=torch_dtype, model_cls=model_cls, streaming=streaming
+    )
     expertmerger.compose()
     expertmerger.save_checkpoint(f"models_merge/{config['model_type']}")

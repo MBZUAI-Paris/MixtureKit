@@ -1,4 +1,3 @@
-import gc
 import re
 import os
 from pathlib import Path
@@ -29,8 +28,9 @@ def _get_config_files(model_id, destination, new_model_type, model_cls):
         The relative paths of the new modeling and configuration files.
     """
     os.makedirs(destination, exist_ok=True)
-    model_base = model_cls.from_pretrained(model_id, trust_remote_code=True)
-    config_path = str(model_base.config_class)
+    # Only the configuration is needed to locate the source files, no weight is loaded
+    config = transformers.AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+    config_path = str(type(config))
     if "transformers." in config_path:
         transformers_path = Path(transformers.__file__).parents[0]
         model_path = transformers_path / "models" / config_path.split(".")[2]
@@ -43,13 +43,13 @@ def _get_config_files(model_id, destination, new_model_type, model_cls):
     modeling_file = [
         file
         for file in files
-        if f"modeling_{model_base.config.to_dict()['model_type'].split('_text')[0]}"
+        if f"modeling_{config.model_type.split('_text')[0]}"
         in file
     ][0]
     configuration_file = [
         file
         for file in files
-        if f"configuration_{model_base.config.to_dict()['model_type'].split('_text')[0]}"
+        if f"configuration_{config.model_type.split('_text')[0]}"
         in file
     ][0]
     # Copy the configuration files of the base model to the directory of the new MoE model
@@ -58,10 +58,6 @@ def _get_config_files(model_id, destination, new_model_type, model_cls):
     # Rename the configuration files
     new_modeling_file = f"modeling_{new_model_type}.py"
     new_configuration_file = f"configuration_{new_model_type}.py"
-
-    del model_base
-    # Manually clears the memory from the loaded model
-    gc.collect()
 
     os.rename(
         f"{destination}/{modeling_file.split('/')[-1]}",
