@@ -1,5 +1,8 @@
 """Training helpers for models merged with MixtureKit."""
 
+import json
+import os
+
 import torch
 import transformers
 
@@ -51,3 +54,15 @@ def moe_loss_function(model):
         return loss + (aux_loss * weight).to(loss.dtype)
 
     return loss_function
+
+
+def mark_trained(output_dir):
+    """Records in the saved configuration that the routers or stitch layers were trained."""
+    path = os.path.join(output_dir, "config.json")
+    if not os.path.exists(path):  # LoRA adapters: the base model's config is unchanged
+        return
+    with open(path, encoding="utf-8") as f:
+        config = json.load(f)
+    config["mixturekit_trained"] = True
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)

@@ -589,6 +589,9 @@ class MoeExperts:
                 "expert_names": [
                     expert.get("expert_name") or expert["model_id"] for expert in self.config["experts"]
                 ],
+                "expert_model_ids": [expert["model_id"] for expert in self.config["experts"]],
+                # Local directories are never listed as Hub models (model card)
+                "expert_is_local": [os.path.isdir(expert["model_id"]) for expert in self.config["experts"]],
                 "num_experts_per_tok": self.config["num_experts_per_tok"],
                 "alpha": self.config.get("alpha", 0.0),
                 "router_layers": self._router_layers(),
@@ -754,6 +757,7 @@ def build_moe(
     torch_dtype=torch.float16,
     model_cls=AutoModelForCausalLM,
     streaming=True,
+    output_dir=None,
 ):
     """
     This function builds the unified framework by merging the provided models
@@ -771,13 +775,24 @@ def build_moe(
     streaming: bool, default=True
         Read the experts and write the merged checkpoint tensor by tensor,
         which keeps the memory usage low. Set to False to load full experts.
+    output_dir: str, default=None
+        Where to write the merged model, models_merge/<model_type> by default.
+
+    Returns
+    -------
+    The directory of the merged model.
     References
     ----------
         .. footbibliography::
     """
-    os.makedirs("models_merge", exist_ok=True)
+    output_dir = output_dir or os.path.join("models_merge", config["model_type"])
+    build_config = json.loads(json.dumps(config, default=str))  # kept as given
     expertmerger = MoeExperts(
         config, torch_dtype=torch_dtype, model_cls=model_cls, streaming=streaming
     )
     expertmerger.compose()
-    expertmerger.save_checkpoint(f"models_merge/{config['model_type']}")
+    expertmerger.save_checkpoint(output_dir)
+    # The configuration it was built from, to rebuild it or describe it (model card)
+    with open(os.path.join(output_dir, "mixturekit_config.json"), "w") as f:
+        json.dump(build_config, f, indent=2)
+    return output_dir

@@ -40,6 +40,22 @@ pytest
 
 ---
 
+## Command line
+
+```bash
+mixturekit build examples/configs/btx_gemma3.yaml     # merge the experts (YAML = build_moe config)
+mixturekit train my_training.yaml                     # train the routers (model_id: models_merge/gemmax)
+mixturekit visualize models_merge/gemmax              # see which expert every token uses
+mixturekit push models_merge/gemmax my-org/gemmax     # upload it with a generated model card
+```
+
+`mixturekit build ... --push-to-hub my-org/name` builds and uploads in one go. The model card
+lists the experts, the method, whether the routers are trained, how to load the model and the
+configuration to rebuild it; `mixturekit card MODEL` writes it without uploading. More configs:
+[`examples/configs/`](examples/configs).
+
+---
+
 ## Quick start
 
 The script below builds a **BTX** MoE that routes tokens between a Gemma‑4B base model and two specialized fine-tuned experts (FrenchGemma for *French Language* and MedGemma for *Health Information*). For BTS or vanilla architectures, change the `moe_method` to **BTS** and **traditional** respectively. The `model_cls` argument is optional: multimodal checkpoints such as Gemma 3 are merged through their language model (the vision tower is not kept), which gives a text-only MoE.
@@ -110,7 +126,8 @@ The MoE method is read from the merged model, no flag is needed for BTS.
 ### 3. Launch training
 
 ```bash
-accelerate launch --config_file mixture_training/deepspeed_config.yaml mixture_training/train_model.py mixture_training/config_training.yaml
+mixturekit train mixture_training/config_training.yaml          # one GPU
+accelerate launch --config_file mixture_training/deepspeed_config.yaml -m MixtureKit.train mixture_training/config_training.yaml   # several GPUs
 ```
 
 Set `num_processes` in `deepspeed_config.yaml` to your number of GPUs. The script:
