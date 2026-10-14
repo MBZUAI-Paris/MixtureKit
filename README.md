@@ -1,223 +1,134 @@
-<h1>MixtureKit  🚀
-<img alt='MixtureKit logo' src='logo.png' width='220' align='right' />
-</h1>
+<p align="center">
+  <img alt="MixtureKit logo" src="https://raw.githubusercontent.com/MBZUAI-Paris/MixtureKit/main/logo.png" width="180">
+</p>
 
-[![made-with-python](https://img.shields.io/badge/Made%20with-Python-green.svg)](#python) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb)
+<h1 align="center">MixtureKit</h1>
 
-`MixtureKit` package provides high-level helper functions to merge pretrained and finetuned models
-into a unified framework, integrating Mixture-of-Experts (MoE) advanced architectures.
+<p align="center">
+  <b>Turn the fine-tuned models you already have into one Mixture-of-Experts model.</b><br>
+  Merge Hugging Face checkpoints, train the routers, see which expert every token uses.
+</p>
 
-## ✨ Highlights
+<p align="center">
+  <a href="https://github.com/MBZUAI-Paris/MixtureKit/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/MBZUAI-Paris/MixtureKit/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="https://mbzuai-paris.github.io/MixtureKit/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-blue"></a>
+  <a href="https://arxiv.org/abs/2512.12121"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2512.12121-b31b1b"></a>
+  <a href="https://github.com/MBZUAI-Paris/MixtureKit/blob/main/LICENSE"><img alt="License: BSD-3-Clause" src="https://img.shields.io/badge/license-BSD--3--Clause-green"></a>
+  <a href="https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"></a>
+</p>
 
-* **One‑line merge** of multiple HF checkpoints into a single MoE model.
-* Supports **Branch‑Train‑MiX (BTX)**, **Branch‑Train‑Stitch (BTS)** and *vanilla* MoE.
-* Built‑in **routing visualizer**: `mixturekit visualize MODEL` shows which experts every token uses, overall and per layer, as an app, a shareable HTML page or inline in notebooks. See [`examples/README_vis.md`](examples/README_vis.md).
----
-
-## Installation
-
-```bash
-git clone https://github.com/MBZUAI-Paris/MixtureKit
-cd MixtureKit
-pip install -e .            # build and load merged models
-pip install -e ".[train]"   # + the training scaffold (trl, peft, accelerate, ...)
-pip install -e ".[vis]"     # + the routing visualizer (streamlit)
-```
-
-A zip download of the repository installs the same way.
-
-> **Models**: tested with Llama 3, Qwen 2.5, Qwen 3, Qwen 3.5 and Gemma 3 / Gemma 4 experts
-> (multimodal checkpoints are merged through their language model). Qwen 3.5 and Gemma 4
-> need a transformers 5 version that includes them.
->
-> **Requirements**: Python ≥ 3.10 · PyTorch ≥ 2.5 · transformers 4.52 to 5.x.
-> Every transformers minor release from 4.52 to 5.19 is tested. Merged models subclass the
-> installed transformers classes, so they load with `AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True)`
-> without MixtureKit installed.
-
-To run the tests (CPU, about 10 seconds, no download):
+You have a base model and a few fine-tunes of it: one for math, one for code, one for a
+language. MixtureKit composes them into a single Mixture-of-Experts model whose routers
+learn, token by token, which expert to use, and shows you what they learned.
 
 ```bash
-pip install -e ".[test]"
-pytest
+pip install "mixturekit[vis] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+
+mixturekit build examples/configs/traditional_qwen3.yaml   # merge the experts -> models_merge/qwen3moe2x
+mixturekit train my_training.yaml                          # train the routers -> e.g. qwen3moe2x-trained
+mixturekit visualize qwen3moe2x-trained                    # see which expert every token uses
+mixturekit push qwen3moe2x-trained my-org/my-moe           # share it, with a model card
 ```
 
----
+`my_training.yaml` starts from [`mixture_training/config_training.yaml`](https://github.com/MBZUAI-Paris/MixtureKit/blob/main/mixture_training/config_training.yaml)
+(`model_id: models_merge/qwen3moe2x`, your dataset and `output_dir`). Merging runs on a
+laptop; training the routers wants a GPU.
 
-**Try it in 15 minutes on a free GPU:** the [Colab notebook](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb) merges two Qwen3-0.6B models, trains the routers and shows the routing.
+<p align="center">
+  <img alt="Token routing of a two-expert model: Arabic-script tokens go to one expert, Latin-script tokens to the other" src="https://raw.githubusercontent.com/MBZUAI-Paris/MixtureKit/main/examples/vis_example.png" width="560">
+</p>
 
-## Command line
+**Try it in 15 minutes on a free GPU:** the [Colab notebook](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb)
+merges two Qwen3-0.6B models, trains the routers and shows the routing.
 
-```bash
-mixturekit build examples/configs/btx_gemma3.yaml     # merge the experts (YAML = build_moe config)
-mixturekit train my_training.yaml                     # train the routers (model_id: models_merge/gemmax)
-mixturekit visualize models_merge/gemmax              # see which expert every token uses
-mixturekit push models_merge/gemmax my-org/gemmax     # upload it with a generated model card
+## Why MixtureKit
+
+* **Three composition methods** behind one config:
+  [Branch-Train-MiX](https://arxiv.org/abs/2403.07816) (BTX), Mixtral-style MoE and
+  [Branch-Train-Stitch](https://arxiv.org/abs/2502.00075) (BTS).
+* **Merges on a laptop**: the experts are read and the merged model written tensor by
+  tensor, so a merge needs memory for a few tensors at a time, not for the experts.
+* **Plain transformers models**: the result loads with
+  `AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True)`, without MixtureKit,
+  and is tested on transformers 4.52 to 5.19.
+* **Router training included**: `mixturekit train` trains the routers (or the BTS stitch
+  layers) with a load balancing loss, optionally with LoRA on the experts, on one GPU or many.
+* **Routing visualizer**: an app, a shareable HTML page or an inline notebook view of which
+  expert every token uses, layer by layer.
+* **Hub ready**: `mixturekit push` uploads the model with a generated model card.
+
+Tested with Llama 3, Qwen 2.5, Qwen 3, Qwen 3.5, Gemma 3 and Gemma 4 experts (multimodal
+checkpoints are merged through their language model).
+
+## Which method?
+
+| | BTX | Traditional | BTS |
+| --- | --- | --- | --- |
+| Kept per expert | the projections you choose | the feed-forward block | the whole model |
+| Shared | everything else, averaged | everything else, averaged | nothing: experts run next to a hub |
+| Trained | a router per routed projection | a router per layer | stitch layers |
+| Compute per token | top-k routed projections | top-k feed-forward blocks | all the experts |
+
+Start with **traditional** for fine-tunes of one base model. More in the
+[guide](https://mbzuai-paris.github.io/MixtureKit/methods.html).
+
+## A merge, in YAML or Python
+
+```yaml
+moe_method: traditional          # btx, traditional or bts
+model_type: qwen3moe2x           # the name of the merged model and of its folder
+num_experts_per_tok: 2
+experts:
+  - {expert_name: base, model_id: Qwen/Qwen3-0.6B-Base}
+  - {expert_name: chat, model_id: Qwen/Qwen3-0.6B}
+alpha: 0.01                      # load balancing weight
 ```
 
-`mixturekit build ... --push-to-hub my-org/name` builds and uploads in one go. The model card
-lists the experts, the method, whether the routers are trained, how to load the model and the
-configuration to rebuild it; `mixturekit card MODEL` writes it without uploading. More configs:
-[`examples/configs/`](examples/configs).
+```python
+import torch
+from MixtureKit import build_moe
 
----
-
-## Quick start
-
-The script below builds a **BTX** MoE that routes tokens between a Gemma‑4B base model and two specialized fine-tuned experts (FrenchGemma for *French Language* and MedGemma for *Health Information*). For BTS or vanilla architectures, change the `moe_method` to **BTS** and **traditional** respectively. The `model_cls` argument is optional: multimodal checkpoints such as Gemma 3 are merged through their language model (the vision tower is not kept), which gives a text-only MoE.
-
-```bash
-# From the repo root
-python examples/example_build_moe.py
+config = {
+    "moe_method": "traditional",
+    "model_type": "qwen3moe2x",
+    "experts": [
+        {"expert_name": "base", "model_id": "Qwen/Qwen3-0.6B-Base"},
+        {"expert_name": "chat", "model_id": "Qwen/Qwen3-0.6B"},
+    ],
+    "alpha": 0.01,
+}
+path = build_moe(config, torch_dtype=torch.bfloat16)   # models_merge/qwen3moe2x
 ```
 
-### Configuration keys
-
-| Key | Meaning |
-| --- | --- |
-| `moe_method` | `btx`, `traditional` or `bts` |
-| `model_type` | Name of the merged model, also its output folder `models_merge/<model_type>` |
-| `experts` | List of `{"expert_name", "model_id"}`; with BTS the first one is the hub |
-| `router_layers` | BTX: projections turned into routed experts, e.g. `mlp.gate_proj`, `self_attn.q_proj` |
-| `router_layers_index` | Transformer blocks to convert, `[]` for all of them |
-| `num_experts_per_tok` | Number of experts activated per token (top-k) |
-| `alpha` | Weight of the load balancing loss (BTX, traditional). The loss is averaged over all the routers and equals 1 for a perfectly balanced load, so `alpha` has the same scale whatever the depth; `0.01` is a common choice. It is only computed in training mode |
-| `stitch_freq` | BTS: a stitch layer every `stitch_freq` blocks (and on the last block) |
-
-<details>
-<summary>What happens under the hood?</summary>
-
-1. A config dictionary is created that lists the base expert, two additional experts, the routing layers, etc.
-2. `MixtureKit.build_moe()` merges the checkpoints and writes the MoE to `models_merge/gemmax/`.
-3. The script reloads the model with `AutoModelForCausalLM` and prints a parameter‑breakdown table — only router weights stay trainable.
-
-</details>
-
----
-## 🔧 Fine-tune / Supervised-Fine-Tuning (SFT)
-
-The **`mixture_training/`** folder contains a ready-to-go scaffold that trains
-any merged MoE checkpoint (BTX, traditional or BTS). By default the experts stay
-frozen and only the **routers** (BTX, traditional) or the **stitch layers** (BTS)
-are trained. Set `use_lora: true` to also train **LoRA adapters** on the
-projections of the experts (requires `peft`).
-
-```
-mixture_training/
-├── config_training.yaml      # all hyper-params in one place
-├── deepspeed_config.yaml     # accelerate + DeepSpeed ZeRO-2 config (8 GPUs)
-└── train_model.py            # launch-script
-```
-
-### 1. Prepare your data
-
-* Expected format: 🤗 `datasets` arrow table saved with `save_to_disk()`.
-* A column called **`messages`** (list of chat turns), each turn being a dict
-  `{"role": "...", "content": "..."}`.
-
-### 2. Edit **`config_training.yaml`**
-
-Minimal edits for your own run:
-
-| Key            | What it does                                                          |
-| -------------- | --------------------------------------------------------------------- |
-| `dataset_path` | Path to the dataset of step 1                                         |
-| `model_id`     | Path or HF-Hub id of the **merged MoE** (e.g. `models_merge/gemmax`)  |
-| `output_dir`   | Where to write the trained model, or the LoRA adapters                |
-| `use_lora`     | `false`: routers / stitch layers only, `true`: also LoRA on the experts |
-| `response_template` | Loss on the responses only; remove it (and `instruction_template`) to train on whole sequences |
-
-The MoE method is read from the merged model, no flag is needed for BTS.
-
-### 3. Launch training
-
-```bash
-mixturekit train mixture_training/config_training.yaml          # one GPU
-accelerate launch --config_file mixture_training/deepspeed_config.yaml -m MixtureKit.train mixture_training/config_training.yaml   # several GPUs
-```
-
-Set `num_processes` in `deepspeed_config.yaml` to your number of GPUs. The script:
-
-1. Loads the MoE checkpoint in the precision set by `bf16` / `fp16`,
-2. Trains with 🤗 `trl`'s **`SFTTrainer`** (the load balancing loss weighted by `alpha` is added to the loss),
-3. Saves the model, or the LoRA adapters with the routers / stitch layers, to `output_dir`,
-   together with the modeling files, so the output can be reloaded or trained again.
-
-With LoRA, merge the adapters back into the model with
-`PeftModel.from_pretrained(base_model, output_dir).merge_and_unload()`.
-
-## Example gallery
-
-The file [`examples/config_examples.txt`](examples/config_examples.txt) contains more ready‑to‑use configs. Copy one into a small script and call `build_moe()`.
-
-| Key        | Scenario                  | MoE flavour               |
-| ---------- | ------------------------- | ------------------------- |
-| `llama3x`  | Two Llama‑3‑1B experts    | **BTX**                       |
-| `qwen3x`   | Three Qwen‑3‑0.6B experts | **Traditional** MoE           |
-| `gemmabts` | Gemma + 2 Gemma-experts   | **BTS** (layer‑stitching) |
-
----
+More configurations: [`examples/configs/`](https://github.com/MBZUAI-Paris/MixtureKit/tree/main/examples/configs). All the keys:
+[Configuration](https://mbzuai-paris.github.io/MixtureKit/configuration.html).
 
 ## Documentation
 
-* **API reference** — open `docs/index.html` or visit the online version.
----
+**[mbzuai-paris.github.io/MixtureKit](https://mbzuai-paris.github.io/MixtureKit/)**:
+[quickstart](https://mbzuai-paris.github.io/MixtureKit/quickstart.html) ·
+[methods](https://mbzuai-paris.github.io/MixtureKit/methods.html) ·
+[command line](https://mbzuai-paris.github.io/MixtureKit/cli.html) ·
+[training](https://mbzuai-paris.github.io/MixtureKit/training.html) ·
+[visualizer](https://mbzuai-paris.github.io/MixtureKit/visualizer.html) ·
+[upgrading older models and limitations](https://mbzuai-paris.github.io/MixtureKit/upgrade.html) ·
+[API](https://mbzuai-paris.github.io/MixtureKit/api.html)
 
-## Contributing 🤝
+## Development
 
-Pull requests are welcome! Please open an issue first to discuss your ideas.
-
----
-
-## Models built with earlier versions
-
-Models merged with MixtureKit before version 1.1 carry modeling files generated for
-transformers 4.52 and do not load with recent transformers versions. Upgrade them in place
-(the weights are kept; traditional MoE weights are renamed to the current layout):
-
-```python
-from MixtureKit import upgrade_checkpoint
-
-upgrade_checkpoint("models_merge/gemmax", base_model_class="Gemma3ForCausalLM")
+```bash
+git clone https://github.com/MBZUAI-Paris/MixtureKit && cd MixtureKit
+pip install -e ".[test]"
+pytest                                # CPU, tiny models, no download
+pip install -e ".[doc]" && sphinx-build docs docs/_build/html
 ```
 
-`base_model_class` is the transformers causal LM class of the experts, e.g.
-`Qwen3ForCausalLM` or `LlamaForCausalLM` (`Gemma3ForCausalLM` for Gemma 3, multimodal included).
-
-### Known limitations
-
-* BTS: `output_hidden_states` returns the hub and expert streams packed on the last
-  dimension; with transformers 5 the outputs of the expert layers are listed too.
-* The load balancing loss counts padding tokens.
-* BTS with Gemma 4: only the hub's per-layer embeddings are kept, and the expert streams use
-  the hub's per-layer inputs, so an expert stream differs slightly from its original model.
-* BTS needs `input_ids` (`inputs_embeds` alone are not supported).
-* BTS with `device_map="auto"` across several GPUs: a hub layer and its expert layers
-  (`model.expert_layers.N`) should be on the same device; pass an explicit `device_map`.
-* trl ≥ 1.15 requires Triton (Linux) for training.
-
----
-
-## Acknowledgements
-
-The weight-averaging and routed-projection approach builds on ideas from
-[Branch-Train-MiX](https://arxiv.org/abs/2403.07816),
-[Branch-Train-Stitch](https://arxiv.org/abs/2502.00075) and
-[mergoo](https://github.com/Leeroo-AI/mergoo).
-
----
-
-## License
-
-MixtureKit is released under the **BSD 3-Clause** License — see the [LICENSE](./LICENSE) file for details.
-
----
-
-*Happy mixing!* 🎛️
+Requirements: Python 3.10 or later, PyTorch 2.5 or later, transformers 4.52 to 5.x.
+Issues and pull requests are welcome; please open an issue first for larger changes.
 
 ## Citation
 
-If you find `mixturekit` useful in your research, please consider citing the [paper](https://arxiv.org/abs/2512.12121):
+If MixtureKit is useful in your work, please cite the [paper](https://arxiv.org/abs/2512.12121):
 
 ```bibtex
 @article{chamma2025mixturekit,
@@ -227,3 +138,10 @@ If you find `mixturekit` useful in your research, please consider citing the [pa
   year={2025}
 }
 ```
+
+## Acknowledgements and license
+
+MixtureKit builds on [Branch-Train-MiX](https://arxiv.org/abs/2403.07816),
+[Branch-Train-Stitch](https://arxiv.org/abs/2502.00075) and ideas from
+[mergoo](https://github.com/Leeroo-AI/mergoo). It is released under the
+[BSD 3-Clause License](https://github.com/MBZUAI-Paris/MixtureKit/blob/main/LICENSE).

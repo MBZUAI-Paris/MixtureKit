@@ -482,3 +482,14 @@ def test_saving_again_keeps_the_rotary_fields_of_transformers_4(experts, build, 
     for key in ("rope_theta", "rope_scaling", "rope_local_base_freq"):
         assert saved.get(key) == built.get(key), key
     assert "rope_theta" in saved
+
+
+def test_build_moe_has_the_defaults_of_the_command(experts, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = {
+        "moe_method": "traditional",
+        "model_type": "minimal",
+        "experts": [{"expert_name": f"e{i}", "model_id": p} for i, p in enumerate(experts["qwen3"][:2])],
+    }
+    path = build_moe(config, torch_dtype=torch.float32)
+    assert json.load(open(os.path.join(path, "config.json")))["num_experts_per_tok"] == 2

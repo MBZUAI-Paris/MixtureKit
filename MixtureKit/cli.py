@@ -19,7 +19,7 @@ import sys
 def _visualize(args):
     if args.text is None and args.html is None:
         if importlib.util.find_spec("streamlit") is None:
-            sys.exit("The visualizer app needs streamlit: pip install 'mixturekit[vis]'")
+            sys.exit("The visualizer app needs streamlit: install the vis extra, pip install 'mixturekit[vis]'")
         app = os.path.join(os.path.dirname(os.path.abspath(__file__)), "visualizer_app.py")
         command = [sys.executable, "-m", "streamlit", "run", app, "--server.port", str(args.port), "--"]
         command += [args.model] + (["--device", args.device] if args.device else [])

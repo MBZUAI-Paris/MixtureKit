@@ -1,5 +1,5 @@
 """
-Model cards and Hugging Face Hub uploads for merged models.
+Model cards and Hugging Face Hub uploads for merged models::
 
     from MixtureKit.hub import write_model_card, push_to_hub
 
@@ -60,7 +60,7 @@ def _redacted(build, is_local):
 
 def model_card(model_dir, repo_id=None):
     """
-    This function writes the model card of a merged model as markdown: the experts, the
+    This function returns the model card of a merged model, in Markdown: the experts, the
     method, whether the routers are trained, how to load and inspect it, the configuration
     to rebuild it and the citation.
 
