@@ -8,9 +8,11 @@ import re
 from tqdm import tqdm
 import torch
 from transformers import (
+    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
 )
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 from ._streaming import ExpertCheckpoint, NotStreamable, write_safetensors
 from .utils import (
     _get_config_files,
@@ -18,6 +20,7 @@ from .utils import (
     _modify_model,
     _patch_stitches,
     _replace_script,
+    _rename_model_type,
     _replace_type_dependency,
 )
 
@@ -367,6 +370,28 @@ class MoeExperts:
         else:
             self._plan = self._plan_btx(experts, router_layers)
 
+    def _use_text_model_for_multimodal(self):
+        """
+        Multimodal experts (e.g. Gemma3 checkpoints with a vision tower) are merged
+        through their language model, using the text-only causal LM class.
+        """
+        if self.model_cls is not AutoModelForCausalLM:
+            return
+        model_id = self.config["experts"][0]["model_id"]
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        text_config = config.get_text_config()
+        if text_config is config:
+            return
+        try:
+            text_cls = MODEL_FOR_CAUSAL_LM_MAPPING[type(text_config)]
+        except KeyError:
+            return
+        print(
+            f"Multimodal experts: merging their language model with {text_cls.__name__}, "
+            "the vision tower is not kept."
+        )
+        self.model_cls = text_cls
+
     def compose(self):
         """
         This functon composes all the experts into a single unified checkpoint
@@ -374,6 +399,7 @@ class MoeExperts:
         """
         experts = self.config["experts"]
         moe_method = self.config.get("moe_method")
+        self._use_text_model_for_multimodal()
         router_layers = (
             ["mlp"] if moe_method == "traditional" else self.config["router_layers"]
         )
@@ -437,7 +463,7 @@ class MoeExperts:
 
         if config["architectures"] is None:
             config["architectures"] = [old_model_type.capitalize() + "ForCausalLM"]
-        config["architectures"][0] = _replace_type_dependency(
+        config["architectures"][0] = _rename_model_type(
             config["architectures"][0], config["model_type"], self.config["model_type"]
         )
         # Change the model_type to the new configured model_type with MoE
@@ -775,7 +801,7 @@ class {replacement}:
             for key in config["auto_map"].keys():
                 config["auto_map"][key] = config["auto_map"][key].split("--")[-1]
                 # Replace the function names with the new model_type
-                config["auto_map"][key] = _replace_type_dependency(
+                config["auto_map"][key] = _rename_model_type(
                     config["auto_map"][key],
                     old_model_type,
                     self.config["model_type"],

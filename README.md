@@ -34,7 +34,7 @@ SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0 pip install -e .
 
 ## Quick start
 
-The script below builds a **BTX** MoE that routes tokens between a Gemma‑4B base model and two specialized fine-tuned experts (FrenchGemma for *French Language* and MedGemma for *Health Information*). For BTS or vanilla architectures, change the `moe_method` to **BTS** and **traditional** respectively. For other model families, comment the `model_cls`.
+The script below builds a **BTX** MoE that routes tokens between a Gemma‑4B base model and two specialized fine-tuned experts (FrenchGemma for *French Language* and MedGemma for *Health Information*). For BTS or vanilla architectures, change the `moe_method` to **BTS** and **traditional** respectively. The `model_cls` argument is optional: multimodal checkpoints such as Gemma 3 are merged through their language model (the vision tower is not kept), which gives a text-only MoE.
 
 ```bash
 # From the repo root
