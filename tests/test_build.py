@@ -471,3 +471,13 @@ def test_btx_without_any_routed_layer_raises(experts, tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="router_layers_index"):
         build_moe(config, torch_dtype=torch.float32)
     assert not os.path.exists("models_merge/norouter/config.json")
+
+
+def test_saving_again_keeps_the_rotary_fields_of_transformers_4(experts, build, tmp_path):
+    """A model trained (saved again) with transformers 5 still loads the same with transformers 4."""
+    built = json.load(open(os.path.join(build("btx", experts["llama"], "llamabtx"), "config.json")))
+    load(build("btx", experts["llama"], "llamabtx")).save_pretrained(tmp_path / "saved")
+    saved = json.load(open(tmp_path / "saved" / "config.json"))
+    for key in ("rope_theta", "rope_scaling", "rope_local_base_freq"):
+        assert saved.get(key) == built.get(key), key
+    assert "rope_theta" in saved

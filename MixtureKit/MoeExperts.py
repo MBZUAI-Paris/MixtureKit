@@ -765,6 +765,8 @@ def _add_legacy_rope_fields(config, config_class=None):
         if before != after:
             return
     config.update(legacy)
+    # Saved again by the configuration class when transformers 5 saves the model (training)
+    config["mixturekit_legacy_rope"] = legacy
 
 
 CONFIGURATION_TEMPLATE = '''"""
@@ -777,6 +779,13 @@ import transformers
 
 class MixtureKitConfig(getattr(transformers, "{config_class}")):
     model_type = "{model_type}"
+
+    def to_dict(self):
+        output = super().to_dict()
+        # The rotary fields read by transformers 4, which transformers 5 does not save
+        for key, value in (output.get("mixturekit_legacy_rope") or {{}}).items():
+            output.setdefault(key, value)
+        return output
 
 
 # save_pretrained copies this file next to the weights
