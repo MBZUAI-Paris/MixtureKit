@@ -155,12 +155,20 @@ class MoeExperts:
         model: transformers_modules
             The loaded pretrained model.
         """
-        model = self.model_cls.from_pretrained(
+        model, loading_info = self.model_cls.from_pretrained(
             model_id,
             torch_dtype=self.torch_dtype,
             device_map=self.device_map,
             trust_remote_code=True,
+            output_loading_info=True,
         )
+        tied_keys = set(getattr(model, "_tied_weights_keys", None) or [])
+        missing = [key for key in loading_info["missing_keys"] if key not in tied_keys]
+        if missing:
+            raise ValueError(
+                f"{model_id} does not store {len(missing)} weights of {type(model).__name__}, "
+                f"they would be randomly initialized: {missing[:5]}"
+            )
         # Moving a dispatched model would break its device map
         if self.device_map is None:
             model = model.to(self.device)
@@ -269,6 +277,24 @@ class MoeExperts:
             if key is not None:
                 self.state_dict[key] = tensor.to(self.device)
 
+    def _check_same_parameters(self, names_per_expert):
+        """
+        This function checks that all the experts have the same parameter names, otherwise
+        the averages would be wrong and some experts would be missing from the checkpoint.
+        """
+        reference = set(names_per_expert[0])
+        for expert_idx, names in enumerate(names_per_expert[1:], start=1):
+            names = set(names)
+            if names != reference:
+                model_id = self.config["experts"][expert_idx]["model_id"]
+                only_here = sorted(names - reference)[:3]
+                only_first = sorted(reference - names)[:3]
+                raise ValueError(
+                    f"Expert {expert_idx} ({model_id}) does not have the same parameters "
+                    f"as expert 0: {only_here} only in expert {expert_idx}, "
+                    f"{only_first} only in expert 0. The experts must share one architecture."
+                )
+
     def _plan_average(self, name, experts, holders, n_experts):
         """
         This function plans the average of a parameter across the experts holding it.
@@ -364,6 +390,7 @@ class MoeExperts:
             experts.append(
                 ExpertCheckpoint(expert["model_id"], self.model_cls, self.torch_dtype)
             )
+        self._check_same_parameters([ckpt.names() for ckpt in experts])
         for ckpt in experts:
             self._tied_weights_keys.extend(ckpt.tied_keys)
             self.model_configs.append(ckpt.config.to_dict())
@@ -381,13 +408,20 @@ class MoeExperts:
         """
         if self.model_cls is not AutoModelForCausalLM:
             return
-        model_id = self.config["experts"][0]["model_id"]
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-        text_config = config.get_text_config()
-        if text_config is config:
+        configs = [
+            AutoConfig.from_pretrained(expert["model_id"], trust_remote_code=True)
+            for expert in self.config["experts"]
+        ]
+        if all(config.get_text_config() is config for config in configs):
             return
+        text_types = {type(config.get_text_config()) for config in configs}
+        if len(text_types) > 1:
+            raise ValueError(
+                "The experts have different language model types: "
+                f"{sorted(t.__name__ for t in text_types)}"
+            )
         try:
-            text_cls = MODEL_FOR_CAUSAL_LM_MAPPING[type(text_config)]
+            text_cls = MODEL_FOR_CAUSAL_LM_MAPPING[text_types.pop()]
         except KeyError:
             return
         print(
@@ -410,6 +444,8 @@ class MoeExperts:
         print(f"MoE Layer Index : {self.config['router_layers_index'] or '[*]'}")
 
         if self.streaming:
+            if self.device != "cpu" or self.device_map is not None:
+                print("Streaming merges on CPU, the device and device_map arguments are ignored.")
             try:
                 self._compose_streaming(router_layers)
                 return
@@ -422,11 +458,14 @@ class MoeExperts:
                 self.select_moe_model_config_idx = 0
                 self._matched_router_layers = set()
 
+        names_per_expert = []
         for expert_idx, expert in enumerate(experts):
             model = self._load_expert(expert["model_id"])
             print(f"merging expert : {expert['model_id']}")
             self._record_metadata(model)
             weights = model.state_dict()
+            names_per_expert.append(list(weights))
+            self._check_same_parameters(names_per_expert)
 
             if moe_method == "bts":
                 self._add_bts_expert(weights, expert_idx)
