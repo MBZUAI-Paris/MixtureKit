@@ -358,6 +358,43 @@ class MoeExperts:
         print(f"routed tensors : {n_routed} | averaged tensors : {n_averaged}")
         return plan
 
+    def _stitch_entries(self):
+        """
+        This function plans the initial weights of the BTS stitch layers, saved with the
+        checkpoint so that a freshly built model is deterministic: the projections from the
+        experts to the hub start as identities and the gates at zero.
+        Their positions follow the stitch layers created by the modeling file.
+        """
+        model_config = self.model_configs[self.select_moe_model_config_idx]
+        model_config = model_config.get("text_config") or model_config
+        hidden_size = model_config["hidden_size"]
+        n_blocks = model_config.get("n_layer", model_config.get("num_hidden_layers"))
+        n_streams = len(self.config["experts"])
+
+        stitch_freq = self.config.get("stitch_freq", 5)
+        stitch_layers = list(self.config.get("stitch_layers_index") or []) or [
+            i for i in range(n_blocks) if i % stitch_freq == 0 and i != 0
+        ]
+        invalid = [i for i in stitch_layers if not 0 <= i < n_blocks]
+        if invalid:
+            raise ValueError(
+                f"stitch_layers_index {invalid} is out of range, the model has {n_blocks} blocks"
+            )
+        if n_blocks - 1 not in stitch_layers:
+            stitch_layers.append(n_blocks - 1)
+
+        shape = (hidden_size, hidden_size)
+        identity = lambda: torch.eye(hidden_size, dtype=self.torch_dtype)
+        zeros = lambda: torch.zeros(shape, dtype=self.torch_dtype)
+        entries = []
+        for block_id in stitch_layers:
+            prefix = f"model.layers.{block_id}.stitches"
+            for stream in range(n_streams - 1):
+                entries.append((f"{prefix}.w_proj.{stream}.weight", shape, self.torch_dtype, identity))
+            for stream in range(n_streams):
+                entries.append((f"{prefix}.w_gate.{stream}.weight", shape, self.torch_dtype, zeros))
+        return entries
+
     def _plan_bts(self, experts):
         plan = []
         for expert_idx, ckpt in enumerate(experts):
@@ -373,7 +410,7 @@ class MoeExperts:
                     plan.append(
                         (key, ckpt.shape(name), ckpt.dtype(name), partial(ckpt.tensor, name))
                     )
-        return plan
+        return plan + self._stitch_entries()
 
     def _compose_streaming(self, router_layers):
         """
@@ -478,6 +515,10 @@ class MoeExperts:
             # Release the expert before loading the next one
             del model, weights
             gc.collect()
+
+        if moe_method == "bts":
+            for name, _, _, init in self._stitch_entries():
+                self.state_dict[name] = init().to(self.device)
 
     def _router_layers(self):
         """
@@ -600,7 +641,9 @@ class MoeExperts:
         )
 
         if self.config.get("moe_method") == "bts":
-            config["stitch_freq"] = self.config["stitch_freq"]
+            config["stitch_freq"] = self.config.get("stitch_freq", 5)
+            if self.config.get("stitch_layers_index"):
+                config["stitch_layers_index"] = list(self.config["stitch_layers_index"])
             pattern = rf"""
             (                   # Group 1:  class + def header
                 class\ {class_model}(?:Text)?Model\(.*?\):\n

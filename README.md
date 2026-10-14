@@ -64,56 +64,56 @@ python examples/example_build_moe.py
 </details>
 
 ---
-🔧 Fine-tune / Supervised-Fine-Tuning (SFT)
+## 🔧 Fine-tune / Supervised-Fine-Tuning (SFT)
 
 The **`mixture_training/`** folder contains a ready-to-go scaffold that trains
-any merged MoE checkpoint with LoRA-adapters (BTX *or* BTS).
+any merged MoE checkpoint (BTX, traditional or BTS). By default the experts stay
+frozen and only the **routers** (BTX, traditional) or the **stitch layers** (BTS)
+are trained. Set `use_lora: true` to also train **LoRA adapters** on the
+projections of the experts (requires `peft`).
 
 ```
 mixture_training/
 ├── config_training.yaml      # all hyper-params in one place
-├── deepspeed_config.yaml     # ZeRO-3 config
-├── requirements.txt          # extra libs (trl, deepspeed, wandb, etc.)
+├── deepspeed_config.yaml     # accelerate + DeepSpeed ZeRO-2 config (8 GPUs)
 └── train_model.py            # launch-script
 ```
 
 ### 1. Prepare your data
 
-* Expected format: 🤗 `datasets` arrow table saved on disk and loaded with
-  `load_from_disk()`.
-* `config_training.yaml` assumes:
-  - a column called **`messages`** (list of chat turns),
-  - each turn is a dict `{"role": "...", "content": "..."}`
-    (same schema as *ShareGPT*).
+* Expected format: 🤗 `datasets` arrow table saved with `save_to_disk()`.
+* A column called **`messages`** (list of chat turns), each turn being a dict
+  `{"role": "...", "content": "..."}`.
 
-### 3. Edit **`config_training.yaml`**
+### 2. Edit **`config_training.yaml`**
 
 Minimal edits for your own run:
 
+| Key            | What it does                                                          |
+| -------------- | --------------------------------------------------------------------- |
+| `dataset_path` | Path to the dataset of step 1                                         |
+| `model_id`     | Path or HF-Hub id of the **merged MoE** (e.g. `models_merge/gemmax`)  |
+| `output_dir`   | Where to write the trained model, or the LoRA adapters                |
+| `use_lora`     | `false`: routers / stitch layers only, `true`: also LoRA on the experts |
+| `response_template` | Loss on the responses only; remove it (and `instruction_template`) to train on whole sequences |
 
-| Key            | What it does                                                       |
-| -------------- | ------------------------------------------------------------------ |
-| `dataset_path` | Path to the dataset produced in step 2                             |
-| `model_id`     | Path or HF-Hub id of the**merged MoE** (e.g. `models_merge/gemmax`) |
-| `output_dir`   | Where to write checkpoints / LoRA adapters                         |
-| `run_name`     | Friendly name shown in 🤗`wandb` / logs                            |
+The MoE method is read from the merged model, no flag is needed for BTS.
 
-
-### 4. Launch single-node training
+### 3. Launch training
 
 ```bash
-accelerate launch --config_file mixture_training/deepspeed_config.yaml mixture_training/train_model.py
+accelerate launch --config_file mixture_training/deepspeed_config.yaml mixture_training/train_model.py mixture_training/config_training.yaml
 ```
 
-The script will:
+Set `num_processes` in `deepspeed_config.yaml` to your number of GPUs. The script:
 
-1. Load the MoE checkpoint in **bf16** with distributed training if multi GPUs are available,
-2. Train with 🤗 `trl`’s **`SFTTrainer`**,
-3. Save incremental checkpoints to the local directory `output_dir`.
+1. Loads the MoE checkpoint in the precision set by `bf16` / `fp16`,
+2. Trains with 🤗 `trl`'s **`SFTTrainer`** (the load balancing loss weighted by `alpha` is added to the loss),
+3. Saves the model, or the LoRA adapters with the routers / stitch layers, to `output_dir`,
+   together with the modeling files, so the output can be reloaded or trained again.
 
-> **Tip:** To switch from *BTX*/*Traditional* to *BTS* finetuning, open
-> `config_training.yaml` and set `is_bts` to `True`.
-
+With LoRA, merge the adapters back into the model with
+`PeftModel.from_pretrained(base_model, output_dir).merge_and_unload()`.
 
 ## Example gallery
 
