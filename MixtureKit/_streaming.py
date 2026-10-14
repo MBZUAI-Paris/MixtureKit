@@ -7,10 +7,12 @@ peak memory stays around the size of the largest tensor instead of whole models.
 import json
 import os
 import re
+import shutil
 import struct
 
 import torch
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub.utils import EntryNotFoundError
 from safetensors import safe_open
 from transformers import AutoConfig, GenerationConfig
 
@@ -26,6 +28,15 @@ _TO_SAFETENSORS = {
     torch.uint8: "U8",
     torch.bool: "BOOL",
 }
+for _name, _code in [
+    ("uint16", "U16"),
+    ("uint32", "U32"),
+    ("uint64", "U64"),
+    ("float8_e4m3fn", "F8_E4M3"),
+    ("float8_e5m2", "F8_E5M2"),
+]:
+    if hasattr(torch, _name):
+        _TO_SAFETENSORS[getattr(torch, _name)] = _code
 _FROM_SAFETENSORS = {name: dtype for dtype, name in _TO_SAFETENSORS.items()}
 
 
@@ -112,6 +123,9 @@ class ExpertCheckpoint:
                 self.aliases.add(name)
 
             file, key = self._sources[name]
+            stored_dtype = self._handle(file).get_slice(key).get_dtype()
+            if stored_dtype not in _FROM_SAFETENSORS:
+                raise NotStreamable(f"unsupported dtype {stored_dtype} for '{name}'")
             shape = tuple(self._handle(file).get_slice(key).get_shape())
             if shape != tuple(tensor.shape):
                 raise NotStreamable(
@@ -129,7 +143,14 @@ class ExpertCheckpoint:
     def _local_directory(model_id):
         if os.path.isdir(model_id):
             return model_id
-        return snapshot_download(model_id, allow_patterns=["*.safetensors", "*.json"])
+        # Download only the shards used by the model, not other weight formats of the repo
+        try:
+            index = hf_hub_download(model_id, "model.safetensors.index.json")
+            with open(index, "r", encoding="utf-8") as f:
+                files = sorted(set(json.load(f)["weight_map"].values()))
+        except EntryNotFoundError:
+            files = ["model.safetensors"]
+        return snapshot_download(model_id, allow_patterns=["*.json", *files])
 
     def _handle(self, file):
         if file not in self._handles:
@@ -226,6 +247,14 @@ def write_safetensors(directory, entries, max_shard_size="9GB"):
         The largest size of a safetensors shard.
     """
     limit = _parse_size(max_shard_size)
+    for _, _, dtype, _ in entries:
+        if dtype not in _TO_SAFETENSORS:
+            raise ValueError(f"Cannot write {dtype} tensors to safetensors")
+
+    # The new shards are written apart and replace the previous ones once complete
+    staging = os.path.join(directory, ".mixturekit-staging")
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging)
     nbytes = lambda shape, dtype: torch.Size(shape).numel() * dtype.itemsize
 
     shards, current, current_size = [], [], 0
@@ -261,7 +290,7 @@ def write_safetensors(directory, entries, max_shard_size="9GB"):
         header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
         header_bytes += b" " * (-len(header_bytes) % 8)
 
-        with open(os.path.join(directory, file), "wb") as f:
+        with open(os.path.join(staging, file), "wb") as f:
             f.write(struct.pack("<Q", len(header_bytes)))
             f.write(header_bytes)
             for name, shape, dtype, compute in shard:
@@ -277,5 +306,15 @@ def write_safetensors(directory, entries, max_shard_size="9GB"):
 
     if n_shards > 1:
         index = {"metadata": {"total_size": total_size}, "weight_map": weight_map}
-        with open(os.path.join(directory, "model.safetensors.index.json"), "w") as f:
+        with open(os.path.join(staging, "model.safetensors.index.json"), "w") as f:
             json.dump(index, f, indent=2)
+
+    # Shards of a previous build would be loaded instead of (or mixed with) the new ones
+    for file in os.listdir(directory):
+        if file == "model.safetensors.index.json" or re.fullmatch(
+            r"model(-\d{5}-of-\d{5})?\.safetensors", file
+        ):
+            os.remove(os.path.join(directory, file))
+    for file in os.listdir(staging):
+        os.replace(os.path.join(staging, file), os.path.join(directory, file))
+    os.rmdir(staging)

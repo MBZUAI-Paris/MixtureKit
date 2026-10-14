@@ -84,4 +84,36 @@ def bts_expert_caches(cache, n_streams: int):
     if not hasattr(cache, "bts_expert_caches"):
         # Copied while still empty, before any layer of this forward pass
         cache.bts_expert_caches = [copy.deepcopy(cache) for _ in range(n_streams)]
+        # Beam search, assisted and contrastive decoding edit the cache of the hub,
+        # the same edits are applied to the caches of the experts. The class is changed
+        # (not the instance methods) so that copies of the cache edit their own experts.
+        cache.__class__ = _bts_cache_class(type(cache))
     return cache.bts_expert_caches
+
+
+_CACHE_EDITS = (
+    "reorder_cache",
+    "crop",
+    "batch_repeat_interleave",
+    "batch_select_indices",
+    "reset",
+)
+_BTS_CACHE_CLASSES = {}
+
+
+def _bts_cache_class(base):
+    """A subclass of the cache class forwarding the edits to `bts_expert_caches`."""
+    if base not in _BTS_CACHE_CLASSES:
+
+        def forward_edit(method):
+            def edit_all(self, *args, **kwargs):
+                result = getattr(base, method)(self, *args, **kwargs)
+                for expert_cache in self.bts_expert_caches:
+                    getattr(expert_cache, method)(*args, **kwargs)
+                return result
+
+            return edit_all
+
+        methods = {m: forward_edit(m) for m in _CACHE_EDITS if hasattr(base, m)}
+        _BTS_CACHE_CLASSES[base] = type(f"Bts{base.__name__}", (base,), methods)
+    return _BTS_CACHE_CLASSES[base]
