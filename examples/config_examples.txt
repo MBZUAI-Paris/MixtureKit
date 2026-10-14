@@ -50,6 +50,7 @@
 #     # The layers to be converted to the MoE architecture with a prefix either mlp (for FFN part)
 #     # or attn (for attention part)
 #     "router_layers": ["mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"],
+#     # Weight of the load balancing loss averaged over the routers (1 when balanced)
 #     "alpha": 0.01,
 #     "router_layers_index": []
 # }
