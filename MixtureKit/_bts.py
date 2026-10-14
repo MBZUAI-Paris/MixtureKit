@@ -1,3 +1,4 @@
+import copy
 from typing import Sequence, List
 import torch
 from torch import nn
@@ -63,3 +64,24 @@ class StitchLayer(nn.Module):
                 for i in range(self.n_experts - 1)
             ]
             return [x_hub] + h_ex
+
+
+def bts_expert_caches(cache, n_streams: int):
+    """
+    This function returns one key/value cache per expert stream. The hub keeps the
+    cache handled by transformers, the experts get copies of it attached to that cache,
+    so they persist across the generation steps.
+
+    Parameters
+    ----------
+    cache: transformers.Cache or None
+        The cache of the hub, None when caching is disabled.
+    n_streams: int
+        The number of expert streams (experts without the hub).
+    """
+    if cache is None:
+        return [None] * n_streams
+    if not hasattr(cache, "bts_expert_caches"):
+        # Copied while still empty, before any layer of this forward pass
+        cache.bts_expert_caches = [copy.deepcopy(cache) for _ in range(n_streams)]
+    return cache.bts_expert_caches
