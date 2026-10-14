@@ -372,12 +372,12 @@ def _replace_script(match, mlp_function="linear", block_transformer="mlp"):
             {input_dim}, {output_dim}, mlp_function='{mlp_function}', block_transformer='{block_transformer}')"
 
 
-def _replace_type_dependency(input, old_model_type, new_model_type):
+def _rename_model_type(text, old_model_type, new_model_type):
     """
-    This function replaces the old model type with the new model type
-    across the different configuration files also for the relative dependencies.
+    This function replaces the old model type with the new model type in a name or a script,
+    in its capitalized, upper and lower case forms.
 
-    input: str
+    text: str
         The input to modify.
     old_model_type: str
         The name or id of the old model type.
@@ -385,14 +385,29 @@ def _replace_type_dependency(input, old_model_type, new_model_type):
         The name or id of the new model type.
     """
     # If the first character is upper
-    input = input.replace(
+    text = text.replace(
         f"{old_model_type[0].upper() + old_model_type[1:]}",
         f"{new_model_type[0].upper() + new_model_type[1:]}",
     )
     # If the whole name is upper
-    input = input.replace(old_model_type.upper(), new_model_type.upper())
+    text = text.replace(old_model_type.upper(), new_model_type.upper())
     # If the whole name is lower
-    input = input.replace(old_model_type, new_model_type)
+    return text.replace(old_model_type, new_model_type)
+
+
+def _replace_type_dependency(input, old_model_type, new_model_type):
+    """
+    This function replaces the old model type with the new model type
+    across the different configuration files also for the relative dependencies.
+
+    input: str
+        The script to modify.
+    old_model_type: str
+        The name or id of the old model type.
+    new_model_type: str
+        The name or id of the new model type.
+    """
+    input = _rename_model_type(input, old_model_type, new_model_type)
     input = "from functools import partial\n" + input
     input_dependencies = re.sub(
         r"from\s+\.\.\.", lambda example: "from transformers.", input
