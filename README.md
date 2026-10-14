@@ -41,6 +41,19 @@ The script below builds a **BTX** MoE that routes tokens between a Gemma‑4B ba
 python examples/example_build_moe.py
 ```
 
+### Configuration keys
+
+| Key | Meaning |
+| --- | --- |
+| `moe_method` | `btx`, `traditional` or `bts` |
+| `model_type` | Name of the merged model, also its output folder `models_merge/<model_type>` |
+| `experts` | List of `{"expert_name", "model_id"}`; with BTS the first one is the hub |
+| `router_layers` | BTX: projections turned into routed experts, e.g. `mlp.gate_proj`, `self_attn.q_proj` |
+| `router_layers_index` | Transformer blocks to convert, `[]` for all of them |
+| `num_experts_per_tok` | Number of experts activated per token (top-k) |
+| `alpha` | Weight of the load balancing loss (BTX, traditional). The loss is averaged over all the routers and equals 1 for a perfectly balanced load, so `alpha` has the same scale whatever the depth; `0.01` is a common choice. It is only computed in training mode |
+| `stitch_freq` | BTS: a stitch layer every `stitch_freq` blocks (and on the last block) |
+
 <details>
 <summary>What happens under the hood?</summary>
 

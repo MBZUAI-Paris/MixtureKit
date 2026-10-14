@@ -81,7 +81,7 @@ def _modify_decoder(match, moe_method):
     1. Expose `loss_lb_attn` from the attention call
     2. Add gate & softmax after class initialization
     3. Replace the single `self.mlp(...)` line with the MoE branch
-    4. Aggregate original and load losses
+    4. Return the load balancing loss as the last output
 
     Parameters
     ----------
@@ -125,18 +125,23 @@ def _modify_decoder(match, moe_method):
         moe_block = """
         # === MoE feed-forward ===
         global cache_selected_experts
-        weights, selected_experts = torch.topk(self.gate(hidden_states), self.config.num_experts_per_tok)
+        router_logits = self.gate(hidden_states)
+        weights, selected_experts = torch.topk(router_logits, self.config.num_experts_per_tok)
         weights = torch.softmax(weights, dim=-1, dtype=torch.float).to(hidden_states.dtype)
         # Every expert reads the same normalized input, the outputs are accumulated apart
         moe_out = torch.zeros_like(hidden_states)
-        loss_lb_mlp = 0
         for ix in range(self.config.num_experts):
             batch_idx, token_idx, expert_idx = torch.where(selected_experts == ix)
             cache_selected_experts = {'batch_idx': batch_idx, 'token_idx': token_idx, 'expert_idx': ix}
-            mlp_out, expert_loss_lb = self.mlp(hidden_states)
+            mlp_out, _ = self.mlp(hidden_states)
             moe_out[batch_idx, token_idx] += mlp_out * weights[batch_idx, token_idx, expert_idx].unsqueeze(-1)
-            loss_lb_mlp = loss_lb_mlp + expert_loss_lb
         hidden_states = moe_out
+        # alpha weights the load balancing loss averaged over the routers of all the layers
+        loss_lb_mlp = 0
+        if self.training and self.config.alpha:
+            loss_lb_mlp = self.config.alpha / self.config.num_hidden_layers * switch_load_balancing_loss(
+                router_logits, selected_experts, self.config.num_experts
+            )
 """
         class_body = re.sub(
             r"^[ \t]*hidden_states\s*=\s*self\.mlp\([^\n]*\)\n",
@@ -149,10 +154,14 @@ def _modify_decoder(match, moe_method):
     else:
         class_body = class_body.replace(" = self.mlp(", ", loss_lb_mlp = self.mlp(")
 
-    # 4) Introduce load loss as part of the total loss
+    # 4) Return the load balancing loss as the last output of the layer, so it keeps its
+    #    gradient through gradient checkpointing (module attributes would lose it)
     class_body = re.sub(
-        r"(^[ \t]*)return[^\n]+",
-        r"\1self.loss_lb = loss_lb_attn + loss_lb_mlp\n\g<0>",
+        r"(^[ \t]*)return ([^\n]+)",
+        r"\1layer_outputs_lb = \2\n"
+        r"\1if not isinstance(layer_outputs_lb, tuple):\n"
+        r"\1    layer_outputs_lb = (layer_outputs_lb,)\n"
+        r"\1return layer_outputs_lb + (loss_lb_attn + loss_lb_mlp,)",
         class_body,
         flags=re.MULTILINE,
     )
@@ -216,7 +225,7 @@ def _modify_model(match, update_kv=False):
     # The variables should be integrated inside a list for the later sum
     new_class_body = new_class_body.replace(
         "hidden_states = layer_outputs[0]\n",
-        "hidden_states = layer_outputs[0]\n            all_losses_lb += (decoder_layer.loss_lb,)\n",
+        "hidden_states = layer_outputs[0]\n            all_losses_lb += (layer_outputs[-1],)\n",
     )
     # Expand the output class with a new argument for the load balancing loss
     pattern_model = r"(return\s+ExtendedModelOutputWithPast\s*\(([^)]*))(\))"

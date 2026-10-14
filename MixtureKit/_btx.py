@@ -64,7 +64,7 @@ def make_moe_projection(
         make_expert=make_expert,
         num_experts=config.num_experts,
         top_k=config.num_experts_per_tok,
-        alpha=config.alpha,
+        moe_config=config,
     )
 
 
@@ -76,7 +76,7 @@ class RoutedExperts(nn.Module):
         make_expert,
         num_experts: int,
         top_k: int = 2,
-        alpha: float = 0,
+        moe_config=None,
     ):
         """
         A projection replicated across experts with a learned top-k router.
@@ -93,14 +93,15 @@ class RoutedExperts(nn.Module):
             The total number of experts handled by the router (gate).
         top_k: int, default=2
             The number of active experts per token, weighted with a softmax.
-        alpha: float, default=0
-            The regularization parameter for the load balancing loss.
+        moe_config: PretrainedConfig, default=None
+            The model configuration. Its `alpha` weights the load balancing loss averaged
+            over all the routers of the model, computed in training only.
         """
         super().__init__()
         self.in_features = d_in
         self.out_features = d_out
         self.num_experts_per_tok = top_k
-        self.alpha = alpha
+        self.moe_config = moe_config
         # The parameter names (gate, experts.expert_i) define the checkpoint layout
         self.gate = nn.Linear(d_in, num_experts, bias=False)
         self.experts = nn.ModuleDict(
@@ -125,17 +126,16 @@ class RoutedExperts(nn.Module):
             contribution = expert(flat_inputs[rows]) * flat_weights[rows, slots, None]
             output.index_add_(0, rows, contribution)
 
-        if self.alpha != 0:
-            self.loss_lb = self._load_balancing_loss(logits, top_ids, top_weights)
+        # Read by the parent module within the same forward pass
+        self.loss_lb = 0
+        alpha = getattr(self.moe_config, "alpha", 0)
+        if self.training and alpha:
+            # Every routed projection of every selected block has its own router
+            n_routers = len(self.moe_config.router_layers_index) * len(
+                self.moe_config.router_layers
+            )
+            self.loss_lb = alpha / max(n_routers, 1) * switch_load_balancing_loss(
+                logits, top_ids, len(self.experts)
+            )
 
         return output.reshape(*inputs.shape[:-1], self.out_features)
-
-    def _load_balancing_loss(self, logits, top_ids, top_weights):
-        """
-        Load balancing penalty between the dispatch weights of the selected
-        experts and the full router distribution.
-        """
-        n_tokens = logits.shape[0] * logits.shape[1]
-        dispatch = torch.zeros_like(logits).scatter(-1, top_ids, top_weights)
-        probs = logits.softmax(dim=-1, dtype=torch.float).to(logits.dtype)
-        return self.alpha * len(self.experts) / n_tokens * (dispatch * probs).sum()

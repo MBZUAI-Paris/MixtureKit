@@ -73,6 +73,8 @@ class MoeExperts:
         self.model_configs = []
         self.generation_configs = []
         self._tied_weights_keys = []
+        # The router layers found in the experts, the others are dropped from the config
+        self._matched_router_layers = set()
         # The expert providing the configuration and the tokenizer of the merged model,
         # it is switched to the expert with the largest vocabulary
         self.select_moe_model_config_idx = 0
@@ -113,7 +115,9 @@ class MoeExperts:
             return False
         if "mlp" not in param_name and "self_attn" not in param_name:
             return False
-        return any(f".{layer}." in param_name for layer in router_layers)
+        matched = [layer for layer in router_layers if f".{layer}." in param_name]
+        self._matched_router_layers.update(matched)
+        return bool(matched)
 
     @staticmethod
     def _expert_key(name, expert_idx):
@@ -416,6 +420,7 @@ class MoeExperts:
                 self.model_configs = []
                 self.generation_configs = []
                 self.select_moe_model_config_idx = 0
+                self._matched_router_layers = set()
 
         for expert_idx, expert in enumerate(experts):
             model = self._load_expert(expert["model_id"])
@@ -434,6 +439,20 @@ class MoeExperts:
             # Release the expert before loading the next one
             del model, weights
             gc.collect()
+
+    def _router_layers(self):
+        """
+        This function returns the router layers of the merged model, without duplicates.
+        For BTX, only the layers found in the experts are kept, since the number of
+        routers sets the scale of the load balancing loss.
+        """
+        router_layers = list(dict.fromkeys(self.config["router_layers"]))
+        if self.config.get("moe_method") != "btx":
+            return router_layers
+        missing = [layer for layer in router_layers if layer not in self._matched_router_layers]
+        if missing:
+            print(f"Router layers not found in the experts, ignored: {missing}")
+        return [layer for layer in router_layers if layer in self._matched_router_layers]
 
     def _moe_config(self):
         """
@@ -459,7 +478,7 @@ class MoeExperts:
         config["model_type"] = config["model_type"].split("_text")[0]
         old_model_type = config["model_type"]
         config.update(moe_fields)
-        config["router_layers"] = self.config["router_layers"]
+        config["router_layers"] = self._router_layers()
 
         if config["architectures"] is None:
             config["architectures"] = [old_model_type.capitalize() + "ForCausalLM"]
@@ -668,10 +687,14 @@ class MoeExperts:
         elif self.config.get("moe_method") == "traditional":
             file_path = "_traditional"
 
-        with open(
-            os.path.join(script_directory, f"{file_path}.py"), "r", encoding="utf-8"
-        ) as fh:
-            parg_moe = fh.read()
+        # The routed methods share the load balancing loss
+        parts = ["_routing", file_path] if file_path in ("_btx", "_traditional") else [file_path]
+        parg_moe = ""
+        for part in parts:
+            with open(
+                os.path.join(script_directory, f"{part}.py"), "r", encoding="utf-8"
+            ) as fh:
+                parg_moe += fh.read() + "\n\n"
         script_moe = script_init_mlp + "\n\n" + parg_moe
 
         replacement = r"ExtendedModelOutputWithPast(BaseModelOutputWithPast)"
