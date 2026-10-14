@@ -22,7 +22,21 @@ It runs on CUDA, Apple silicon (MPS) or CPU (`--device` to choose) and shows:
 | Load of every expert per layer | The mean weight of each expert in each layer: a layer where one expert takes everything has collapsed routing |
 
 Pick layers in the sidebar to see their routing alone. The `MIXTUREKIT_MODEL` environment
-variable, when set, chooses the model (e.g. in a Hugging Face Space).
+variable, when set, chooses the model and locks it: visitors cannot load another one.
+
+## As a Hugging Face Space
+
+Share the visualizer of your model with a public demo:
+
+1. Create a Space with the **Docker** SDK (CPU basic is enough for models up to a few
+   billion parameters).
+2. Upload the files of
+   [`space/`](https://github.com/MBZUAI-Paris/MixtureKit/tree/main/space) to it.
+3. In the Space settings, add the variable `MIXTUREKIT_MODEL` with the Hub id of your merged
+   model (and the secret `HF_TOKEN` if the model is private).
+
+The model is fixed by the variable because a merged model runs its own modeling code
+(`trust_remote_code`): only show models you trust.
 
 ## An HTML view
 
