@@ -1,7 +1,7 @@
 cache_selected_experts = None
 
 
-def convert_linear_to_moe(
+def make_moe_projection(
     name: str,
     config: dict,
     layer_idx: int,
@@ -12,7 +12,9 @@ def convert_linear_to_moe(
     block_transformer: str = "mlp",
 ):
     """
-    This function converts nn.Linear Layer to Mixture of Experts (Moe) Layer.
+    This function builds the projection used at a given position of the transformer block.
+    In the traditional MoE, every projection of the feed-forward block is replicated
+    across experts and driven by the router of the decoder layer.
 
     Parameters
     ----------
@@ -23,9 +25,9 @@ def convert_linear_to_moe(
     layer_idx: int
         The id of the transformer block.
     in_features: int
-        The dimesnion of the input features.
+        The first dimension passed to the original layer constructor.
     out_features: int
-        The dimension of the output features.
+        The second dimension passed to the original layer constructor.
     bias: bool, default=True
         Whether bias is applied in the corresponding layer.
     mlp_function: str, default="linear"
@@ -38,24 +40,23 @@ def convert_linear_to_moe(
 
     Returns
     -------
-    Following the input, if the provided part is to be converted, the return is a MoE class.
-    Otherwise, it is a nn.Linear or Conv1D according to the MLP layer.
+    A TraditionalMoeLayer for the feed-forward projections, otherwise the original
+    nn.Linear or Conv1D layer.
     """
     from transformers.pytorch_utils import Conv1D
 
-    if block_transformer == "mlp":
-        return TraditionalMoeLayer(
-            in_features,
-            out_features,
-            num_experts=config.num_experts,
-            mlp_function=mlp_function,
-            bias=bias,
-        )
-
-    if mlp_function == "linear":
+    if block_transformer != "mlp":
+        if mlp_function == "conv":
+            return Conv1D(in_features, out_features)
         return nn.Linear(in_features, out_features, bias=bias)
-    elif mlp_function == "conv":
-        return Conv1D(in_features, out_features)
+
+    return TraditionalMoeLayer(
+        in_features,
+        out_features,
+        num_experts=config.num_experts,
+        mlp_function=mlp_function,
+        bias=bias,
+    )
 
 
 class TraditionalMoeLayer(nn.Module):
@@ -77,26 +78,18 @@ class TraditionalMoeLayer(nn.Module):
 
         from transformers.pytorch_utils import Conv1D
 
-        if mlp_function == "linear":
-            self.in_features = in_features
-            self.out_features = out_features
-            self.experts = nn.ModuleDict(
-                {
-                    f"expert_{i}": nn.Linear(in_features, out_features, bias)
-                    for i in range(num_experts)
-                }
-            )
+        if mlp_function == "conv":
+            # Conv1D(nf, nx) maps nx -> nf
+            self.in_features, self.out_features = out_features, in_features
+            make_expert = lambda: Conv1D(in_features, out_features)
+        else:
+            self.in_features, self.out_features = in_features, out_features
+            make_expert = lambda: nn.Linear(in_features, out_features, bias)
 
-        elif mlp_function == "conv":
-            # The I/O are transposed with Conv1D
-            self.in_features = out_features
-            self.out_features = in_features
-            self.experts = nn.ModuleDict(
-                {
-                    f"expert_{i}": Conv1D(in_features, out_features)
-                    for i in range(num_experts)
-                }
-            )
+        # The parameter names (experts.expert_i) define the checkpoint layout
+        self.experts = nn.ModuleDict(
+            {f"expert_{i}": make_expert() for i in range(num_experts)}
+        )
 
     def forward(self, x):
         """

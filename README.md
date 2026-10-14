@@ -1,5 +1,5 @@
 <h1>MixtureKit  🚀
-<img alt='Leeroo logo' src='https://github.com/MBZUAI-Paris/MixtureKit/blob/main/logo.png' width='220' align='right' />
+<img alt='MixtureKit logo' src='logo.png' width='220' align='right' />
 </h1>
 
 [![made-with-python](https://img.shields.io/badge/Made%20with-Python-green.svg)](#python)
@@ -122,6 +122,15 @@ The file [`examples/config_examples.txt`](examples/config_examples.txt) contains
 ## Contributing 🤝
 
 Pull requests are welcome! Please open an issue first to discuss your ideas.
+
+---
+
+## Acknowledgements
+
+The weight-averaging and routed-projection approach builds on ideas from
+[Branch-Train-MiX](https://arxiv.org/abs/2403.07816),
+[Branch-Train-Stitch](https://arxiv.org/abs/2502.00075) and
+[mergoo](https://github.com/Leeroo-AI/mergoo).
 
 ---
 

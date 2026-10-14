@@ -22,7 +22,7 @@ def _get_config_files(model_id, destination, new_model_type, model_cls):
     new_model_type: str
         The name of the new configured model with MoE.
     model_cls: type, default=AutoModelForCausalLM
-        Change this when using a architecture not registered with transformers.
+        The class used to load the experts, e.g. for models whose architecture is not mapped by the transformers auto classes.
 
     Returns
     -------
@@ -326,7 +326,7 @@ def _patch_stitches(m: re.Match, model_type) -> str:
 def _replace_script(match, mlp_function="linear", block_transformer="mlp"):
     """
     This function takes the input matches using regex to replace the corresponding layers
-    with the conver_linear_to_moe layers.
+    with the make_moe_projection layers.
 
     Parameters
     ----------
@@ -346,10 +346,10 @@ def _replace_script(match, mlp_function="linear", block_transformer="mlp"):
 
     # Construct the replacement string while keeping indentation
     if bias_arg:
-        return f"{indentation}self.{layer_name} = convert_linear_to_moe('{layer_name}', config, layer_idx, \
+        return f"{indentation}self.{layer_name} = make_moe_projection('{layer_name}', config, layer_idx, \
             {input_dim}, {output_dim}, {bias_arg}, mlp_function='{mlp_function}', block_transformer='{block_transformer}')"
     else:
-        return f"{indentation}self.{layer_name} = convert_linear_to_moe('{layer_name}', config, layer_idx, \
+        return f"{indentation}self.{layer_name} = make_moe_projection('{layer_name}', config, layer_idx, \
             {input_dim}, {output_dim}, mlp_function='{mlp_function}', block_transformer='{block_transformer}')"
 
 
