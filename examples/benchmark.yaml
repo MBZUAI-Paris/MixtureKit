@@ -1,0 +1,14 @@
+# The experts against the merged model, with lm-evaluation-harness:
+#   pip install "mixturekit[bench] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+#   mixturekit benchmark examples/benchmark.yaml
+models:
+  - {name: Qwen3-0.6B-Base, model_id: Qwen/Qwen3-0.6B-Base}
+  - {name: Qwen3-0.6B, model_id: Qwen/Qwen3-0.6B}
+  - {name: MoE 2x0.6B (trained routers), model_id: qwen3moe2x-trained}
+tasks: [arc_challenge, hellaswag, gsm8k, mmlu]
+num_fewshot: null        # the default of every task
+batch_size: auto
+limit: null              # e.g. 100 for a quick check
+dtype: bfloat16
+apply_chat_template: false
+output: benchmark.md     # and benchmark.json with the raw results

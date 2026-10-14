@@ -8,6 +8,7 @@ mixturekit visualize MODEL [--text TEXT] [--html FILE] [--device cuda|mps|cpu] [
 mixturekit card MODEL [--repo-id ORG/NAME]
 mixturekit push MODEL ORG/NAME [--private]
 mixturekit export MODEL OUTPUT
+mixturekit benchmark CONFIG.yaml
 ```
 
 `build`
@@ -34,3 +35,7 @@ mixturekit export MODEL OUTPUT
 `export`
 : Writes a traditional MoE of Llama, Mistral or Qwen3 experts as a native Mixtral or
   Qwen3-MoE model (see {doc}`export`).
+
+`benchmark`
+: Scores merged models and their experts with lm-evaluation-harness (see {doc}`benchmark`).
+  Needs `mixturekit[bench]`.

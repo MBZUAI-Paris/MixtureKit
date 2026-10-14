@@ -7,6 +7,7 @@ The `mixturekit` command.
     mixturekit card MODEL [--repo-id ORG/NAME]
     mixturekit push MODEL ORG/NAME [--private]
     mixturekit export MODEL OUTPUT
+    mixturekit benchmark benchmark.yaml
 """
 
 import argparse
@@ -134,6 +135,26 @@ def _export(args):
     return 0
 
 
+def _benchmark(args):
+    import yaml
+
+    if not os.path.isfile(args.config):
+        sys.exit(f"{args.config}: no such file")
+    with open(args.config, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    if not isinstance(config, dict) or not config.get("models") or not config.get("tasks"):
+        sys.exit(f"{args.config}: needs models and tasks (see examples/benchmark.yaml)")
+    if importlib.util.find_spec("lm_eval") is None:
+        sys.exit("Benchmarks need lm-evaluation-harness: install the bench extra, pip install 'mixturekit[bench]'")
+    from .benchmark import run
+
+    try:
+        print(run(config))
+    except ValueError as error:
+        sys.exit(str(error))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="mixturekit", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -178,6 +199,12 @@ def main(argv=None):
     export.add_argument("model", help="the directory of the merged model")
     export.add_argument("output", help="the directory of the native model")
     export.set_defaults(handler=_export)
+
+    benchmark = commands.add_parser(
+        "benchmark", help="score merged models and their experts with lm-evaluation-harness"
+    )
+    benchmark.add_argument("config", help="a YAML file with the models and tasks (see examples/benchmark.yaml)")
+    benchmark.set_defaults(handler=_benchmark)
 
     args = parser.parse_args(argv)
     return args.handler(args)

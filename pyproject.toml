@@ -57,6 +57,10 @@ train = [
   "trl>=0.19.0",
   "deepspeed>=0.16.9; platform_system == 'Linux'",
 ]
+# mixturekit benchmark
+bench = [
+  "lm_eval>=0.4.8",
+]
 # The routing visualizer app (mixturekit visualize MODEL)
 vis = [
   "pandas",
