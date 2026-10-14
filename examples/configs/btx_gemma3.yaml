@@ -1,0 +1,14 @@
+# A BTX MoE of two Gemma 3 4B fine-tunes (French and medical), as in the README.
+#   mixturekit build examples/configs/btx_gemma3.yaml
+moe_method: btx
+model_type: gemmax                 # the name of the merged model (not a transformers model type)
+num_experts_per_tok: 2
+experts:
+  - expert_name: FrenchGemma
+    model_id: Sufi2425/FrenchGemma-3-4B-Instruct
+  - expert_name: MedGemma
+    model_id: google/medgemma-4b-it
+router_layers: [mlp.gate_proj, mlp.up_proj, mlp.down_proj]
+router_layers_index: []            # all blocks
+alpha: 0.01                        # load balancing weight
+dtype: bfloat16                    # build options: dtype, output_dir, streaming
