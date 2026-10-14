@@ -43,80 +43,68 @@ class MoeExperts:
         device_map: str, default=None
             When in inference mode, it shards the model on Multi-GPUs.
         max_shard_size: str, default="9GB"
-            The maximum Shard size checkpoint chuncks.
+            The largest size of a safetensors shard when saving the checkpoint.
         model_cls: type, default=AutoModelForCausalLM
-            Change this when using a architecture not registered with transformers.
+            The class used to load the experts, e.g. for models whose architecture is not mapped by the transformers auto classes.
         """
         self.config = config
-        self.model_configs = []
-        self.generation_configs = []
         self.torch_dtype = torch_dtype
-        self._tied_weights_keys = []
         self.device = device
         self.device_map = device_map
         self.max_shard_size = max_shard_size
         self.model_cls = model_cls
-        # An empty list is returned if the corresponding key is not part of the dictionary
-        self.config["router_layers_index"] = self.config.get("router_layers_index", [])
-        self.moe_layer_index = self.config["router_layers_index"]
+        # An empty list means that every transformer block is converted
+        self.config.setdefault("router_layers_index", [])
+
+        self.state_dict = {}
+        self.model_configs = []
+        self.generation_configs = []
+        self._tied_weights_keys = []
+        # The expert providing the configuration and the tokenizer of the merged model,
+        # it is switched to the expert with the largest vocabulary
         self.select_moe_model_config_idx = 0
-        self._set_moe_layer_index()
 
-    def _set_moe_layer_index(self):
+    def _routes_block(self, block_id):
         """
-        This function lists the transformer blocks (under the provided id) for moe conversion.
-
-        Returns
-        -------
-        A lambda function returning a bool value mirroring the indices of the corresponding layers
-        for the moe conversion.
-        """
-        if len(self.moe_layer_index) == 0:
-            self._check_moe_layers = lambda x: True
-            print(f"MoE Layer Index : [*]")
-
-        elif len(self.moe_layer_index) >= 1 and self.moe_layer_index[0] is not None:
-            self._check_moe_layers = lambda x: x in self.moe_layer_index
-            print(f"MoE Layer Index : {self.moe_layer_index}")
-
-        else:
-            self._check_moe_layers = lambda x: False
-            print(f"No MoE layer indexes.")
-
-    def _is_layer_suitable_for_router(self, router_layer, model_layer):
-        """
-        This functions checks whether the provided layer is suitable for the moe conversion.
+        This function checks whether the transformer block is selected for the moe conversion.
 
         Parameters
         ----------
-        router_layer: str
-            The corresponding layer listed among the router layers, i.e. the layers to convert.
-        model_layer: str
-            The corresponding layer among the model layers.
+        block_id: int
+            The index of the transformer block.
+        """
+        selected = self.config["router_layers_index"]
+        if not selected:
+            return True
+        if selected[0] is None:
+            return False
+        return block_id in selected
+
+    def _is_routed(self, param_name, router_layers):
+        """
+        This function checks whether the parameter belongs to a layer converted to experts.
+
+        Parameters
+        ----------
+        param_name: str
+            The name of the parameter in the state dict of the expert.
+        router_layers: list
+            The layers to convert, e.g. ["mlp.gate_proj", "self_attn.q_proj"].
 
         Returns
         -------
-        A boolean value reflecting the suitability of the layer for the moe conversion.
+        A boolean value reflecting whether the parameter is kept per expert.
         """
-        # Checks whether the layer id contains a digit refering to the transformer block
-        # and if the corresponding block are among the specified for moe conversion.
+        block_ids = [int(part) for part in param_name.split(".") if part.isdigit()]
+        if len(block_ids) != 1 or not self._routes_block(block_ids[0]):
+            return False
+        if "mlp" not in param_name and "self_attn" not in param_name:
+            return False
+        return any(f".{layer}." in param_name for layer in router_layers)
 
-        model_layer_index = [int(x) for x in model_layer.split(".") if x.isdigit()]
-
-        if not model_layer_index:
-            valid_layer_index = False
-        else:
-            assert len(model_layer_index) == 1
-            valid_layer_index = self._check_moe_layers(model_layer_index[0])
-
-        if (f".{router_layer}." in model_layer) and valid_layer_index:
-            if "mlp" in model_layer or "self_attn" in model_layer:
-                return True
-        return False
-
-    def _load_base_model(self, model_id):
+    def _load_expert(self, model_id):
         """
-        This function loads the requested model using its id and move it to the requested device.
+        This function loads the requested model using its id.
 
         Parameters
         ----------
@@ -134,141 +122,200 @@ class MoeExperts:
             device_map=self.device_map,
             trust_remote_code=True,
         )
-        return model.to(self.device)
+        # Moving a dispatched model would break its device map
+        if self.device_map is None:
+            model = model.to(self.device)
+        return model
 
-    def _shape_adjuster(self, tensor1, tensor2, ix):
+    def _record_metadata(self, model):
         """
-        This function adjusts the shapes of both tensors for the averaging process.
+        This function keeps the configurations and the tied weights of the loaded expert.
+        """
+        # Weight tying allows certain weights to be used in multiple places.
+        # A common application of weight tying in LLMs is to share the weights
+        # between the input embedding layer and the output prediction layer.
+        tied_keys = getattr(model, "_tied_weights_keys", None)
+        if tied_keys:
+            self._tied_weights_keys.extend(tied_keys)
+        self.model_configs.append(model.config.to_dict())
+        self.generation_configs.append(model.generation_config.to_dict())
+
+    def _grow_rows(self, name, merged, incoming, expert_idx):
+        """
+        This function zero-pads the first dimension of the smaller tensor, which happens
+        when the experts have different vocabulary sizes.
 
         Parameters
-        ---------
-        tensor1: torch.tensor
-            The current tensor contatining the previous weights.
-        tensor2: torch.tensor
-            The tensor of the new weights to add to the final average.
-        ix: int
-            The index of the corresponding model block.
+        ----------
+        name: str
+            The name of the parameter, used for the error message.
+        merged: torch.tensor
+            The running average of the previous experts.
+        incoming: torch.tensor
+            The contribution of the current expert.
+        expert_idx: int
+            The index of the current expert.
 
+        Returns
+        -------
+        Both tensors with the same shape.
         """
-        assert tensor1.ndim == tensor2.ndim
-        if tensor1.shape[0] < tensor2.shape[0]:
-            pad_tensor = torch.zeros_like(
-                tensor2, dtype=self.torch_dtype, device=tensor1.device
+        if merged.shape[1:] != incoming.shape[1:]:
+            raise ValueError(
+                f"Cannot average '{name}': expert {expert_idx} has shape "
+                f"{tuple(incoming.shape)} while the previous experts have "
+                f"{tuple(merged.shape)}. Only the first dimension (vocabulary) may differ."
             )
-            pad_tensor[: tensor1.shape[0]] += tensor1
-            tensor1 = pad_tensor
-            self.select_moe_model_config_idx = ix
-        else:
-            pad_tensor = torch.zeros_like(
-                tensor1, dtype=self.torch_dtype, device=tensor2.device
-            )
-            pad_tensor[: tensor2.shape[0]] += tensor2
-            tensor2 = pad_tensor
-        return tensor1, tensor2
+        rows = max(merged.shape[0], incoming.shape[0])
+        if incoming.shape[0] == rows:
+            # The larger vocabulary defines the configuration and the tokenizer
+            self.select_moe_model_config_idx = expert_idx
+
+        def pad(tensor):
+            if tensor.shape[0] == rows:
+                return tensor
+            padded = tensor.new_zeros((rows, *tensor.shape[1:]))
+            padded[: tensor.shape[0]] = tensor
+            return padded
+
+        return pad(merged), pad(incoming)
+
+    def _add_to_average(self, name, tensor, expert_idx, n_experts):
+        """
+        This function adds the share of the current expert to the averaged parameter.
+        """
+        if not tensor.is_floating_point():
+            # Integer buffers are copied from the first expert
+            self.state_dict.setdefault(name, tensor.to(self.device))
+            return
+
+        share = (tensor / n_experts).to(self.device)
+        merged = self.state_dict.get(name)
+        if merged is None:
+            self.state_dict[name] = share
+            return
+        if merged.shape != share.shape:
+            merged, share = self._grow_rows(name, merged, share, expert_idx)
+        self.state_dict[name] = merged + share
+
+    def _add_btx_expert(self, weights, expert_idx, n_experts, router_layers):
+        """
+        BTX / traditional: the routed layers are kept per expert,
+        all the other parameters are averaged across the experts.
+
+        Returns
+        -------
+        The number of routed and averaged tensors.
+        """
+        n_routed, n_averaged = 0, 0
+        for name, tensor in tqdm(weights.items()):
+            if self._is_routed(name, router_layers):
+                prefix, _, leaf = name.rpartition(".")
+                key = f"{prefix}.experts.expert_{expert_idx}.{leaf}"
+                if key in self.state_dict:
+                    raise ValueError(f"Duplicated expert parameter '{key}'.")
+                self.state_dict[key] = tensor.to(self.device)
+                n_routed += 1
+            else:
+                self._add_to_average(name, tensor, expert_idx, n_experts)
+                n_averaged += 1
+        return n_routed, n_averaged
+
+    def _add_bts_expert(self, weights, expert_idx):
+        """
+        BTS: every expert is kept intact. The first expert is the hub (shared backbone),
+        the other experts only contribute their transformer blocks and embeddings.
+        """
+        slot = expert_idx - 1
+        for name, tensor in tqdm(weights.items()):
+            if expert_idx == 0:
+                self.state_dict[name] = tensor.to(self.device)
+                continue
+
+            prefix, _, leaf = name.rpartition(".")
+            if "model.layers." in prefix:
+                # e.g. "19.self_attn.q_proj" -> "19", "self_attn.q_proj"
+                block_id, sub_path = prefix.split("model.layers.", 1)[1].split(".", 1)
+                key = f"model.expert_layers.{block_id}.{slot}.{sub_path}.{leaf}"
+            elif "embed_tokens" in prefix:
+                key = f"model.expert_embed_tokens.{slot}.{leaf}"
+            else:
+                continue
+            self.state_dict[key] = tensor.to(self.device)
 
     def compose(self):
         """
         This functon composes all the experts into a single unified checkpoint
         with or without a Mixture of Experts (MoE) conversion.
         """
-        n = len(self.config["experts"])
-        self.state_dict = {}
-        count_total_router_layers = 0
-        for ix, expert in enumerate(self.config["experts"]):
-            model_id = expert["model_id"]
-            model = self._load_base_model(model_id)
-            print(f"merging expert : {model_id}")
+        experts = self.config["experts"]
+        moe_method = self.config.get("moe_method")
+        router_layers = (
+            ["mlp"] if moe_method == "traditional" else self.config["router_layers"]
+        )
+        print(f"MoE Layer Index : {self.config['router_layers_index'] or '[*]'}")
 
-            # Weight tying allows certain weights to be used in multiple places.
-            # A common application of weight tying in LLMs is to share the weights
-            # between the input embedding layer and the output prediction layer.
-            if hasattr(model, "_tied_weights_keys"):
-                if model._tied_weights_keys != None:
-                    self._tied_weights_keys.extend(model._tied_weights_keys)
-            self.model_configs.append(model.config.to_dict())
-            self.generation_configs.append(model.generation_config.to_dict())
-            router_layers = self.config["router_layers"]
+        for expert_idx, expert in enumerate(experts):
+            model = self._load_expert(expert["model_id"])
+            print(f"merging expert : {expert['model_id']}")
+            self._record_metadata(model)
+            weights = model.state_dict()
 
-            if self.config.get("moe_method") == "traditional":
-                router_layers = ["mlp"]
+            if moe_method == "bts":
+                self._add_bts_expert(weights, expert_idx)
+            else:
+                n_routed, n_averaged = self._add_btx_expert(
+                    weights, expert_idx, len(experts), router_layers
+                )
+                print(f"routed tensors : {n_routed} | averaged tensors : {n_averaged}")
 
-            count_router_layers = 0
-            count_averaged_layers = 0
-            for layer_name, param in tqdm(model.state_dict().items()):
+            # Release the expert before loading the next one
+            del model, weights
+            gc.collect()
 
-                # --- BTS: keep every expert intact ---
-                if self.config["moe_method"] == "bts":
-                    weight_bias = layer_name.split(".")[-1]  # "weight" | "bias"
-                    base_path = layer_name.split(f".{weight_bias}")[0]
+    def _moe_config(self):
+        """
+        This function builds the configuration of the merged model from the
+        configuration of the selected expert.
 
-                    # HUB  – take expert-0 as the shared backbone
-                    if ix == 0:
-                        self.state_dict[layer_name] = param.to(self.device)
-                    # EXTRA EXPERTS  – keep only transformer-block tensors
-                    else:
-                        if "model.layers." in base_path:
-                            layer_part = base_path.split("model.layers.", 1)[
-                                1
-                            ]  # "19.self_attn.q_proj"
-                            layer_id, attr_rest = layer_part.split(
-                                ".", 1
-                            )  # "19", "self_attn.q_proj"
+        Returns
+        -------
+        The new configuration and the model type of the original experts.
+        """
+        config = self.model_configs[self.select_moe_model_config_idx]
+        moe_fields = {
+            "num_experts": len(self.config["experts"]),
+            "num_experts_per_tok": self.config["num_experts_per_tok"],
+            "alpha": self.config["alpha"],
+        }
+        # Vision-based models nest the language model under "text_config"
+        text_config = config.get("text_config")
+        if text_config is not None:
+            text_config["model_type"] = text_config["model_type"].split("_text")[0]
+            text_config.update(moe_fields)
 
-                            expert_idx = ix - 1  # experts start from 0
-                            expert_key = f"model.expert_layers.{layer_id}.{expert_idx}.{attr_rest}.{weight_bias}"
-                            self.state_dict[expert_key] = param.to(self.device)
-                        elif "embed_tokens" in base_path:
-                            expert_idx = ix - 1  # experts start from 0
-                            expert_key = (
-                                f"model.expert_embed_tokens.{expert_idx}.{weight_bias}"
-                            )
-                            self.state_dict[expert_key] = param.to(self.device)
+        config["model_type"] = config["model_type"].split("_text")[0]
+        old_model_type = config["model_type"]
+        config.update(moe_fields)
+        config["router_layers"] = self.config["router_layers"]
 
-                else:  ##### BTX #####
-                    is_merge_layer = True
-                    for router_layer in router_layers:
-                        # Convert specified router layers to moe
-                        if self._is_layer_suitable_for_router(router_layer, layer_name):
-                            is_merge_layer = False
-                            weight_bias = layer_name.split(".")[-1]
-                            # Integrate the new layers into the architecture of the unified framework
-                            new_layer_name = layer_name.split(f"{weight_bias}")[0]
-                            new_layer_name = (
-                                f"{new_layer_name}experts.expert_{ix}.{weight_bias}"
-                            )
-                            assert new_layer_name not in self.state_dict
-                            self.state_dict[new_layer_name] = param.to(self.device)
-                            count_total_router_layers += 1
-                            count_router_layers += 1
+        if config["architectures"] is None:
+            config["architectures"] = [old_model_type.capitalize() + "ForCausalLM"]
+        config["architectures"][0] = _replace_type_dependency(
+            config["architectures"][0], config["model_type"], self.config["model_type"]
+        )
+        # Change the model_type to the new configured model_type with MoE
+        config["model_type"] = self.config["model_type"]
+        config["_name_or_path"] = ""
 
-                    # Average the not-specified and/or not suitable layers fsor conversion
-                    if is_merge_layer:
-                        prev_weight = self.state_dict.get(layer_name)
-                        if prev_weight is None:
-                            prev_weight = torch.tensor(0)
-                        else:
-                            # Padding the smaller tensor to adjust the average computation
-                            if not prev_weight.shape == param.shape:
-                                prev_weight, param = self._shape_adjuster(
-                                    prev_weight, param, ix
-                                )
-
-                        try:
-                            self.state_dict[layer_name] = prev_weight + (param / n).to(
-                                self.device
-                            )
-                        except Exception as e:
-                            print(layer_name, param)
-                            self.state_dict[layer_name] = param.to(self.device)
-                        count_averaged_layers += 1
-
-        if self.config["moe_method"] == "btx":
-            print(f"count_averaged_layers : {count_averaged_layers}")
-            print(f"count_router_layers : {count_router_layers}")
-            print(f"count_total_router_layers : {count_total_router_layers}")
-        del model
-        # Manually clears the memory from the loaded model
-        gc.collect()
+        n_blocks = config.get("n_layer", config.get("num_hidden_layers"))
+        selected = self.config["router_layers_index"]
+        config["router_layers_index"] = (
+            list(range(n_blocks))
+            if not selected
+            else sorted(i for i in set(selected) if i is not None and 0 <= i < n_blocks)
+        )
+        return config, old_model_type
 
     def save_checkpoint(self, checkpoint_path):
         """
@@ -280,50 +327,10 @@ class MoeExperts:
             The path to save the composed unified checkpoint.
         """
         os.makedirs(checkpoint_path, exist_ok=True)
-        # The configuration json file of the base model to modify
-        # The root config is related to vision-based models
-        root_config = self.model_configs[self.select_moe_model_config_idx]
-        # Config extracts the text part of the vision-based models
-        # or the config of the text-based models
-        config = root_config.get("text_config", root_config)
+        config, old_model_type = self._moe_config()
         generation_config = self.generation_configs[self.select_moe_model_config_idx]
-        config["model_type"] = config["model_type"].split("_text")[0]
-        old_model_type = config["model_type"]
-        config["alpha"] = self.config["alpha"]
 
-        # Introduce the configurations related to the experts
-        config["num_experts"] = len(self.config["experts"])
-        config["num_experts_per_tok"] = self.config["num_experts_per_tok"]
-        config = self.model_configs[self.select_moe_model_config_idx]
-        config["model_type"] = config["model_type"].split("_text")[0]
-        old_model_type = config["model_type"]
-        # Introduce the configurations related to the experts
-        config["num_experts"] = len(self.config["experts"])
-        config["num_experts_per_tok"] = self.config["num_experts_per_tok"]
-        config["alpha"] = self.config["alpha"]
-        config["router_layers"] = self.config["router_layers"]
-        if config["architectures"] is None:
-            config["architectures"] = [old_model_type.capitalize() + "ForCausalLM"]
-        config["architectures"][0] = _replace_type_dependency(
-            config["architectures"][0], config["model_type"], self.config["model_type"]
-        )
-        # Change the model_type to the new configured model_type with MoE
-        config["model_type"] = self.config["model_type"]
-        config["_name_or_path"] = ""
-
-        try:
-            layer_indexes = list(range(config["n_layer"]))
-        except Exception:
-            layer_indexes = list(range(config["num_hidden_layers"]))
-        if not self.config["router_layers_index"]:
-            config["router_layers_index"] = layer_indexes
-
-        else:
-            config["router_layers_index"] = list(
-                set(layer_indexes).intersection(set(self.config["router_layers_index"]))
-            )
-            ##### SafeTensors #####
-        # Save all the parameters related to the new configured model
+        ##### SafeTensors #####
         save_torch_state_dict(
             state_dict=self.state_dict,
             save_directory=checkpoint_path,
@@ -332,11 +339,8 @@ class MoeExperts:
         )
 
         ##### Tokenizer file #####
-        # The tokenizer of the base model
-        tokenizer = AutoTokenizer.from_pretrained(
-            self.config["experts"][self.select_moe_model_config_idx]["model_id"]
-        )
-        tokenizer.save_pretrained(checkpoint_path)
+        source_id = self.config["experts"][self.select_moe_model_config_idx]["model_id"]
+        AutoTokenizer.from_pretrained(source_id).save_pretrained(checkpoint_path)
 
         # Retrieve, copy and rename the configuration files (modeling + configuration)
         # of the base model
@@ -694,7 +698,7 @@ def build_moe(
     torch_dtype: torch.dtype, default=torch.float16
         The datatype for loading and saving the weights.
     model_cls: type, default=AutoModelForCausalLM
-        Change this when using a architecture not registered with transformers.
+        The class used to load the experts, e.g. for models whose architecture is not mapped by the transformers auto classes.
     References
     ----------
         .. footbibliography::
