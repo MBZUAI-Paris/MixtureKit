@@ -5,39 +5,87 @@ build-backend = "hatchling.build"
 [project]
 name = "MixtureKit"
 dynamic = ["version"]
-dependencies = [
-    "accelerate>=1.9.0",
-    "black>=24.10.0",
-    "datasets>=4.1.0",
-    "deepspeed==0.16.9",
-    "huggingface_hub>=0.27.1",
-    "tqdm>=4.66.1",
-    "torch>=2.5.0",
-    "trl==0.19.0",
-    "transformers==4.52.4",
-    "streamlit"
-]
+description = "Compose, train and visualize Mixture-of-Experts models from pretrained Hugging Face checkpoints (BTX, BTS and traditional MoE)"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
 authors = [{name = "MBZUAI developers"}]
 maintainers = [
   {name = "Ahmad Chamma", email = "ahmad.chamma@mbzuai.ac.ae"}
 ]
-description = "Merge pretrained and finetuned models into a unified framework, integrating Mixture-of-Experts"
-readme = "README.md"
-license = {file = "LICENSE"}
+keywords = [
+  "mixture-of-experts",
+  "moe",
+  "model-merging",
+  "branch-train-mix",
+  "branch-train-stitch",
+  "llm",
+  "transformers",
+  "huggingface",
+  "pytorch",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Building and loading a merged model only needs these. The merged models subclass the
+# installed transformers classes; every minor version from 4.52 to 5.19 is tested.
+dependencies = [
+  "huggingface_hub>=0.27.1",
+  "safetensors>=0.4.3",
+  "torch>=2.5.0",
+  "tqdm>=4.66.1",
+  "transformers>=4.52.4,<6",
+]
 
 [project.optional-dependencies]
+# mixture_training/train_model.py
+train = [
+  "accelerate>=1.9.0",
+  "datasets>=3.0.0",
+  "peft>=0.15.0",
+  "pyyaml",
+  "trl>=0.19.0",
+  "deepspeed>=0.16.9; platform_system == 'Linux'",
+]
+# vis.py, the routing visualizer
+vis = [
+  "pandas",
+  "streamlit",
+]
+test = [
+  "accelerate>=1.1.0",
+  "pytest>=8",
+  "tokenizers",
+]
 # Requirements necessary for building the documentation
 doc = [
-    "sphinx-bootstrap-theme>=0.8.1",
-    "sphinx-gallery>=0.16.0",
+  "sphinx-bootstrap-theme>=0.8.1",
+  "sphinx-gallery>=0.16.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/MBZUAI-Paris/MixtureKit"
+Repository = "https://github.com/MBZUAI-Paris/MixtureKit"
+Issues = "https://github.com/MBZUAI-Paris/MixtureKit/issues"
+Paper = "https://arxiv.org/abs/2512.12121"
 
 [tool.hatch.build.targets.wheel]
 packages = ["MixtureKit"]
 
-[tool.setuptools.packages.find]
-where = ["MixtureKit"]
-
 [tool.hatch.version]
 source = "vcs"
+# Used when installing from a zip archive, without the git history
+raw-options = { fallback_version = "1.1.0" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]

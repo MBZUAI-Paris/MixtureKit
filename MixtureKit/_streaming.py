@@ -11,6 +11,7 @@ import shutil
 import struct
 
 import torch
+import transformers
 from huggingface_hub import hf_hub_download, snapshot_download
 from huggingface_hub.utils import EntryNotFoundError
 from safetensors import safe_open
@@ -40,6 +41,12 @@ for _name, _code in [
 _FROM_SAFETENSORS = {name: dtype for dtype, name in _TO_SAFETENSORS.items()}
 
 
+def dtype_kwargs(torch_dtype):
+    """`dtype` replaces `torch_dtype` in from_pretrained / from_config from transformers 4.56."""
+    major, minor = (int(x) for x in transformers.__version__.split(".")[:2])
+    return {"dtype" if (major, minor) >= (4, 56) else "torch_dtype": torch_dtype}
+
+
 class NotStreamable(Exception):
     """The expert checkpoint cannot be mapped tensor by tensor onto the model parameters."""
 
@@ -50,10 +57,8 @@ def _instantiate_on_meta(model_cls, config, torch_dtype):
     """
     with torch.device("meta"):
         if hasattr(model_cls, "from_config"):
-            return model_cls.from_config(
-                config, trust_remote_code=True, torch_dtype=torch_dtype
-            )
-        return model_cls._from_config(config, torch_dtype=torch_dtype)
+            return model_cls.from_config(config, trust_remote_code=True, **dtype_kwargs(torch_dtype))
+        return model_cls._from_config(config, **dtype_kwargs(torch_dtype))
 
 
 class ExpertCheckpoint:
@@ -93,7 +98,12 @@ class ExpertCheckpoint:
         if getattr(model, "_keep_in_fp32_modules", None):
             raise NotStreamable(f"{type(model).__name__} keeps modules in float32")
 
-        self.tied_keys = list(getattr(model, "_tied_weights_keys", None) or [])
+        self.model_class_name = type(model).__name__
+        # transformers 5: {tied copy: source}, earlier versions: [tied copies]
+        tied = getattr(model, "_tied_weights_keys", None) or []
+        ties_embeddings = getattr(config.get_text_config(), "tie_word_embeddings", False)
+        self._tie_sources = dict(tied) if isinstance(tied, dict) and ties_embeddings else {}
+        self.tied_keys = list(tied)
         self.config = model.config
         self.config.torch_dtype = torch_dtype
         self.generation_config = self._generation_config(model_id, model)
@@ -102,6 +112,10 @@ class ExpertCheckpoint:
         self._directory = self._local_directory(model_id)
         self._handles = {}
         stored = self._stored_tensors(model)
+        language_model = self._language_model_tensors()
+        # A text-only causal LM read from a multimodal checkpoint
+        if sum(n in language_model for n in expected) > sum(n in stored for n in expected):
+            stored = language_model
         del model
 
         # Tied parameters share the same object, e.g. lm_head and embed_tokens
@@ -115,6 +129,8 @@ class ExpertCheckpoint:
         self.aliases = set()
         for name, tensor in expected.items():
             group = owners[id(tensor)]
+            if name in self._tie_sources and self._tie_sources[name] in stored:
+                group = [self._tie_sources[name]]
             owner = next((n for n in group if n in stored), None)
             if owner is None:
                 raise NotStreamable(f"'{name}' is not stored in {model_id}")
@@ -158,20 +174,23 @@ class ExpertCheckpoint:
             self._handles[file] = safe_open(path, framework="pt", device="cpu")
         return self._handles[file]
 
+    def _weight_map(self):
+        """The safetensors file of every key stored in the checkpoint."""
+        index = os.path.join(self._directory, "model.safetensors.index.json")
+        if os.path.isfile(index):
+            with open(index, "r", encoding="utf-8") as f:
+                return json.load(f)["weight_map"]
+        if os.path.isfile(os.path.join(self._directory, "model.safetensors")):
+            keys = self._handle("model.safetensors").keys()
+            return {key: "model.safetensors" for key in keys}
+        raise NotStreamable(f"no safetensors weights found for {self.model_id}")
+
     def _stored_tensors(self, model):
         """
         This function maps the parameter names to their (file, key) in the checkpoint,
         renaming the keys as `from_pretrained` does.
         """
-        index = os.path.join(self._directory, "model.safetensors.index.json")
-        if os.path.isfile(index):
-            with open(index, "r", encoding="utf-8") as f:
-                weight_map = json.load(f)["weight_map"]
-        elif os.path.isfile(os.path.join(self._directory, "model.safetensors")):
-            keys = self._handle("model.safetensors").keys()
-            weight_map = {key: "model.safetensors" for key in keys}
-        else:
-            raise NotStreamable(f"no safetensors weights found for {self.model_id}")
+        weight_map = self._weight_map()
 
         key_mapping = getattr(model, "_checkpoint_conversion_mapping", None) or {}
         # A task model (e.g. a causal LM) loaded from a checkpoint that nests it under
@@ -180,9 +199,11 @@ class ExpertCheckpoint:
         has_prefix = bool(prefix) and any(key.startswith(prefix) for key in weight_map)
         expects_prefix = bool(prefix) and hasattr(model, prefix)
 
+        # Class specific key fixes (transformers < 5)
+        fix_key = getattr(model, "_fix_state_dict_key_on_load", lambda key: (key, False))
         stored = {}
         for key, file in weight_map.items():
-            name, _ = model._fix_state_dict_key_on_load(key)
+            name, _ = fix_key(key)
             for pattern, replacement in key_mapping.items():
                 name, n_replaced = re.subn(pattern, replacement, name)
                 if n_replaced:
@@ -194,6 +215,28 @@ class ExpertCheckpoint:
                     continue
                 name = name[len(prefix) + 1 :]
             stored[name] = (file, key)
+        return stored
+
+    # Where multimodal checkpoints store their language model, in the layout of a
+    # text-only causal LM: transformers < 4.52, 5.4-5.5, then >= 4.52 (e.g. Gemma3, Mistral3)
+    LANGUAGE_MODEL_PREFIXES = (
+        ("language_model.model.", "model."),
+        ("language_model.lm_head.", "lm_head."),
+        ("model.language_model.model.", "model."),
+        ("model.language_model.", "model."),
+    )
+
+    def _language_model_tensors(self):
+        """Maps the language model of a multimodal checkpoint to a text-only causal LM."""
+        stored = {}
+        for key, file in self._weight_map().items():
+            for prefix, replacement in self.LANGUAGE_MODEL_PREFIXES:
+                if key.startswith(prefix):
+                    stored[replacement + key[len(prefix):]] = (file, key)
+                    break
+            else:
+                if key.startswith("lm_head."):
+                    stored[key] = (file, key)
         return stored
 
     def __contains__(self, name):

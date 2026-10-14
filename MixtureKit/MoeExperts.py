@@ -1,28 +1,19 @@
-import black
 from functools import partial
 import gc
 from huggingface_hub import save_torch_state_dict
 import json
 import os
-import re
 from tqdm import tqdm
 import torch
+import transformers
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
 )
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
-from ._streaming import ExpertCheckpoint, NotStreamable, write_safetensors
-from .utils import (
-    _get_config_files,
-    _modify_decoder,
-    _modify_model,
-    _patch_stitches,
-    _replace_script,
-    _rename_model_type,
-    _replace_type_dependency,
-)
+from ._streaming import ExpertCheckpoint, NotStreamable, dtype_kwargs, write_safetensors
 
 
 class MoeExperts:
@@ -72,6 +63,8 @@ class MoeExperts:
         self._plan = None
         self.model_configs = []
         self.generation_configs = []
+        # (causal LM class, config class) of each expert, the base of the merged model
+        self.model_classes = []
         self._tied_weights_keys = []
         # The router layers found in the experts, the others are dropped from the config
         self._matched_router_layers = set()
@@ -111,7 +104,10 @@ class MoeExperts:
         A boolean value reflecting whether the parameter is kept per expert.
         """
         block_ids = [int(part) for part in param_name.split(".") if part.isdigit()]
-        if len(block_ids) != 1 or not self._routes_block(block_ids[0]):
+        if len(block_ids) != 1:
+            return False
+        # Traditional MoE converts the feed-forward block of every layer
+        if self.config.get("moe_method") != "traditional" and not self._routes_block(block_ids[0]):
             return False
         if "mlp" not in param_name and "self_attn" not in param_name:
             return False
@@ -119,9 +115,15 @@ class MoeExperts:
         self._matched_router_layers.update(matched)
         return bool(matched)
 
-    @staticmethod
-    def _expert_key(name, expert_idx):
-        """The name of a routed parameter inside the experts of its layer."""
+    def _expert_key(self, name, expert_idx):
+        """
+        The name of a routed parameter in the merged model:
+        BTX: model.layers.0.mlp.up_proj.experts.expert_1.weight (one router per projection)
+        traditional: model.layers.0.mlp.experts.1.up_proj.weight (one router per layer)
+        """
+        if self.config.get("moe_method") == "traditional":
+            before, after = name.split(".mlp.", 1)
+            return f"{before}.mlp.experts.{expert_idx}.{after}"
         prefix, _, leaf = name.rpartition(".")
         return f"{prefix}.experts.expert_{expert_idx}.{leaf}"
 
@@ -157,7 +159,7 @@ class MoeExperts:
         """
         model, loading_info = self.model_cls.from_pretrained(
             model_id,
-            torch_dtype=self.torch_dtype,
+            **dtype_kwargs(self.torch_dtype),
             device_map=self.device_map,
             trust_remote_code=True,
             output_loading_info=True,
@@ -183,9 +185,11 @@ class MoeExperts:
         # between the input embedding layer and the output prediction layer.
         tied_keys = getattr(model, "_tied_weights_keys", None)
         if tied_keys:
-            self._tied_weights_keys.extend(tied_keys)
+            # transformers 5 maps the tied copies to their source
+            self._tied_weights_keys.extend(list(tied_keys))
         self.model_configs.append(model.config.to_dict())
         self.generation_configs.append(model.generation_config.to_dict())
+        self.model_classes.append((type(model).__name__, type(model.config).__name__))
 
     def _grow_rows(self, name, merged, incoming, expert_idx):
         """
@@ -272,9 +276,12 @@ class MoeExperts:
         BTS: every expert is kept intact. The first expert is the hub (shared backbone),
         the other experts only contribute their transformer blocks and embeddings.
         """
+        tied_keys = set(self._tied_weights_keys)
         for name, tensor in tqdm(weights.items()):
             key = name if expert_idx == 0 else self._bts_key(name, expert_idx)
             if key is not None:
+                # Tied copies are stored as separate tensors, as in the streamed build
+                tensor = tensor.clone() if key in tied_keys else tensor
                 self.state_dict[key] = tensor.to(self.device)
 
     def _check_same_parameters(self, names_per_expert):
@@ -395,14 +402,24 @@ class MoeExperts:
                 entries.append((f"{prefix}.w_gate.{stream}.weight", shape, self.torch_dtype, zeros))
         return entries
 
+    def _check_bts_vocabularies(self):
+        """
+        BTS keeps one embedding per expert, all fed with the same token ids: the experts
+        must share one vocabulary.
+        """
+        sizes = {(c.get("text_config") or c).get("vocab_size") for c in self.model_configs}
+        if len(sizes) > 1:
+            raise ValueError(
+                f"BTS needs experts with the same vocabulary, found vocabulary sizes {sorted(sizes)}"
+            )
+
     def _plan_bts(self, experts):
         plan = []
         for expert_idx, ckpt in enumerate(experts):
             for name in ckpt.names():
                 if expert_idx == 0:
-                    # A tied copy (e.g. lm_head) is stored once, through its owner
-                    if name in ckpt.aliases and name in ckpt.tied_keys:
-                        continue
+                    # Tied copies (e.g. lm_head) are stored too: some transformers versions
+                    # do not tie them again when loading the merged model
                     key = name
                 else:
                     key = self._bts_key(name, expert_idx)
@@ -432,8 +449,10 @@ class MoeExperts:
             self._tied_weights_keys.extend(ckpt.tied_keys)
             self.model_configs.append(ckpt.config.to_dict())
             self.generation_configs.append(ckpt.generation_config)
+            self.model_classes.append((ckpt.model_class_name, type(ckpt.config).__name__))
 
         if self.config.get("moe_method") == "bts":
+            self._check_bts_vocabularies()
             self._plan = self._plan_bts(experts)
         else:
             self._plan = self._plan_btx(experts, router_layers)
@@ -492,6 +511,7 @@ class MoeExperts:
                 self._tied_weights_keys = []
                 self.model_configs = []
                 self.generation_configs = []
+                self.model_classes = []
                 self.select_moe_model_config_idx = 0
                 self._matched_router_layers = set()
 
@@ -505,6 +525,7 @@ class MoeExperts:
             self._check_same_parameters(names_per_expert)
 
             if moe_method == "bts":
+                self._check_bts_vocabularies()
                 self._add_bts_expert(weights, expert_idx)
             else:
                 n_routed, n_averaged = self._add_btx_expert(
@@ -541,54 +562,60 @@ class MoeExperts:
 
         Returns
         -------
-        The new configuration and the model type of the original experts.
+        The new configuration as a dict.
         """
-        config = self.model_configs[self.select_moe_model_config_idx]
-        moe_fields = {
-            "num_experts": len(self.config["experts"]),
-            "num_experts_per_tok": self.config["num_experts_per_tok"],
-            "alpha": self.config["alpha"],
-        }
-        # Vision-based models nest the language model under "text_config"
-        text_config = config.get("text_config")
-        if text_config is not None:
-            text_config["model_type"] = text_config["model_type"].split("_text")[0]
-            text_config.update(moe_fields)
-
-        config["model_type"] = config["model_type"].split("_text")[0]
-        old_model_type = config["model_type"]
-        config.update(moe_fields)
-        config["router_layers"] = self._router_layers()
-
-        if config["architectures"] is None:
-            config["architectures"] = [old_model_type.capitalize() + "ForCausalLM"]
-        config["architectures"][0] = _rename_model_type(
-            config["architectures"][0], config["model_type"], self.config["model_type"]
-        )
-        # Change the model_type to the new configured model_type with MoE
-        config["model_type"] = self.config["model_type"]
-        config["_name_or_path"] = ""
-
+        config = dict(self.model_configs[self.select_moe_model_config_idx])
+        moe_method = self.config["moe_method"]
         n_blocks = config.get("n_layer", config.get("num_hidden_layers"))
         selected = self.config["router_layers_index"]
-        config["router_layers_index"] = (
-            list(range(n_blocks))
-            if not selected
-            else sorted(i for i in set(selected) if i is not None and 0 <= i < n_blocks)
+        if moe_method == "traditional" or not selected:
+            router_layers_index = list(range(n_blocks))
+        else:
+            router_layers_index = sorted(
+                i for i in set(selected) if i is not None and 0 <= i < n_blocks
+            )
+        config.update(
+            {
+                "model_type": self.config["model_type"],
+                "architectures": ["MixtureKitForCausalLM"],
+                "auto_map": {
+                    "AutoConfig": f"configuration_{self.config['model_type']}.MixtureKitConfig",
+                    "AutoModelForCausalLM": f"modeling_{self.config['model_type']}.MixtureKitForCausalLM",
+                },
+                "base_model_class": self.model_classes[self.select_moe_model_config_idx][0],
+                "moe_method": moe_method,
+                "num_experts": len(self.config["experts"]),
+                "num_experts_per_tok": self.config["num_experts_per_tok"],
+                "alpha": self.config.get("alpha", 0.0),
+                "router_layers": self._router_layers(),
+                "router_layers_index": router_layers_index,
+                "_name_or_path": "",
+            }
         )
-        return config, old_model_type
+        _add_legacy_rope_fields(config)
+        if moe_method == "bts":
+            config["stitch_freq"] = self.config.get("stitch_freq", 5)
+            if self.config.get("stitch_layers_index"):
+                config["stitch_layers_index"] = list(self.config["stitch_layers_index"])
+        return config
 
     def save_checkpoint(self, checkpoint_path):
         """
-        This function saves the composed unified checkpoint as safe tensors in shards (chuncks).
+        This function saves the composed unified checkpoint as safe tensors in shards (chuncks),
+        with its configuration, tokenizer and modeling files.
 
         Parameters
         ----------
         checkpoint_path: str
             The path to save the composed unified checkpoint.
         """
+        model_type = self.config["model_type"]
+        if model_type in CONFIG_MAPPING:
+            raise ValueError(
+                f"model_type '{model_type}' is already a transformers model type, choose another name"
+            )
         os.makedirs(checkpoint_path, exist_ok=True)
-        config, old_model_type = self._moe_config()
+        config = self._moe_config()
         generation_config = self.generation_configs[self.select_moe_model_config_idx]
 
         ##### SafeTensors #####
@@ -605,350 +632,117 @@ class MoeExperts:
         ##### Tokenizer file #####
         source_id = self.config["experts"][self.select_moe_model_config_idx]["model_id"]
         AutoTokenizer.from_pretrained(source_id).save_pretrained(checkpoint_path)
+        _make_tokenizer_config_portable(checkpoint_path)
 
-        # Retrieve, copy and rename the configuration files (modeling + configuration)
-        # of the base model
-        modeling_file, configuration_file = _get_config_files(
-            self.config["experts"][0]["model_id"],
-            checkpoint_path,
-            config["model_type"],
-            self.model_cls,
-        )
-
-        ##### Configuration file #####
-        # Modify the configuration file
-        with open(configuration_file, "r", encoding="utf-8") as f:
-            script_configuration = f.read()
-
-            new_script_configuration = _replace_type_dependency(
-                script_configuration, old_model_type, config["model_type"]
-            )
-
-        # MultiModal case
-        class_model_text = re.findall(r"(\w*\d*)Config\(", new_script_configuration)[0]
-        class_model = class_model_text.split("Text")[0]
-
-        with open(configuration_file, "w") as f:
-            f.write(new_script_configuration)
-
-        ##### Modeling file #####
-
-        with open(modeling_file, "r", encoding="utf-8") as f:
-            script = f.read()
-
-        script_type_dependency = _replace_type_dependency(
-            script, old_model_type, config["model_type"]
-        )
-
-        if self.config.get("moe_method") == "bts":
-            config["stitch_freq"] = self.config.get("stitch_freq", 5)
-            if self.config.get("stitch_layers_index"):
-                config["stitch_layers_index"] = list(self.config["stitch_layers_index"])
-            pattern = rf"""
-            (                   # Group 1:  class + def header
-                class\ {class_model}(?:Text)?Model\(.*?\):\n
-                .*?def\ __init__\([^)]+\):\n
-            )
-            (?P<body>           # Group "body": everything until the next class/EOF
-                (?:[ \t]*.*\n)+?
-            )
-            """
-
-            script_type_dependency = re.sub(
-                pattern,
-                lambda match: _patch_stitches(match, config["model_type"]),
-                script_type_dependency,
-                flags=re.DOTALL | re.VERBOSE,
-            )
-
-        # Class to modify
-        target_class_attn = f"{class_model}Attention"
-        target_class_mlp = f"{class_model}MLP"
-
-        # Regex pattern to detect the target class and its body
-        class_pattern_attn = (
-            rf"(class {target_class_attn}\(.*?\):\n(.*?))(?=\nclass |\ndef |\Z)"
-        )
-        class_pattern_mlp = rf"(class {target_class_mlp}\(.*?\):\n(.*?))(?=\nclass |\ndef |\Z)"
-
-        # Function to modify only the target class
-        def modify_class(match, block_transformer="mlp"):
-            """
-            This function modifies the highlighted class (attention and mlp).
-
-            Parameters
-            ----------
-            match: re.Match
-                The matching parts in the original script.
-            block_transformer: str, default='mlp'
-                Whether this layer belongs to the attention part or Feed-Forward part
-                especially in the case of common names.
-            """
-            # Regex patterns to detect nn.Linear, Conv1D and capture key components
-            pattern_linear = r"(\s*)self\.(\w+)\s*=\s*nn\.Linear\s*\(\s*((?:[\w\.]+(?:\s*\*\s*[\w\.]+)?)?)\s*,\s*((?:[\w\.]+(?:\s*\*\s*[\w\.]+)?)?)\s*(?:,\s*([\w\.= \*\+\-/]+))?\s*\)"
-            pattern_conv = r"(\s*)self\.(\w+)\s*=\s*Conv1D\s*\(\s*((?:[\w\.]+(?:\s*\*\s*[\w\.]+)?)?)\s*,\s*((?:[\w\.]+(?:\s*\*\s*[\w\.]+)?)?)\s*(?:,\s*([\w\.= \*\+\-/]+))?\s*\)"
-
-            class_body = match.group(2)
-
-            if self.config.get("moe_method") in ["btx", "traditional"]:
-                modified_script_linear = re.sub(
-                    pattern_linear,
-                    lambda match: _replace_script(match, "linear", block_transformer),
-                    class_body,
-                )
-                modified_script_conv = re.sub(
-                    pattern_conv,
-                    lambda match: _replace_script(match, "conv", block_transformer),
-                    modified_script_linear,
-                )
-            else:
-                modified_script_conv = class_body
-
-            list_layers = [match[1] for match in re.findall(pattern_linear, class_body)]
-            list_layers += [match[1] for match in re.findall(pattern_conv, class_body)]
-
-            # Change the return statement and the class variables to include the load balance loss
-            list_layers_return = [
-                f"getattr(self.{layer}, 'loss_lb', 0) +" for layer in list_layers[:-1]
-            ]
-            # list_layers_return.append(f"self.{list_layers[-1]}.loss_lb")
-            list_layers_return.append(f"getattr(self.{list_layers[-1]}, 'loss_lb', 0)")
-            list_layers_return = " ".join(list_layers_return)
-
-            modified_script_lb = re.sub(
-                r"(\breturn\s+)([^\n]+)",
-                rf"\1\2, ({list_layers_return})",
-                modified_script_conv,
-            )
-
-            return match.group(1).replace(class_body, modified_script_lb)
-
-        # Apply modification only to the target classes
-        script_attn = re.sub(
-            class_pattern_attn,
-            lambda match: modify_class(match, block_transformer="attn"),
-            script_type_dependency,
-            flags=re.DOTALL,
-        )
-        script_mlp = re.sub(
-            class_pattern_mlp,
-            lambda match: modify_class(match, block_transformer="mlp"),
-            script_attn,
-            flags=re.DOTALL,
-        )
-        # Formatting the script with the black formatter
-        script_formatted = black.format_str(script_mlp, mode=black.FileMode())
-
-        # Check if layer_idx is missing in the constructor part in the DecoderLayer class
-        pattern_MLP = r"self\.\w+\s*=\s*\w*MLP\([^)]*\)"
-        script_mlp = re.sub(
-            pattern_MLP,
-            lambda match: match.group(0).replace("config)", "config, layer_idx)"),
-            script_formatted,
-        )
-
-        # config)
-        pattern_init_mlp_1 = r"(class\s*\w*MLP\(nn\.Module\):\s*.*?def\s+__init__\(\s*self\s*,\s*)(.*?config)(\s*\))"
-        script_init_mlp = re.sub(
-            pattern_init_mlp_1, r"\1\2, layer_idx=None\3", script_mlp
-        )
-
-        # config: SomethingConfig)
-        pattern_init_mlp_2 = r"(class\s+\w*MLP\s*\(nn\.Module\):\s*.*?def\s+__init__\s*\(\s*self\s*,\s*)(config\s*:?[^,)]+)(\s*\))"
-        script_init_mlp = re.sub(
-            pattern_init_mlp_2, r"\1\2, layer_idx=None\3", script_init_mlp
-        )
-
-        # Add the MoE functions to the modeling script
-        script_directory = os.path.dirname(os.path.abspath(__file__))
-
-        if self.config.get("moe_method") == "btx":
-            file_path = "_btx"
-        elif self.config.get("moe_method") == "bts":
-            file_path = "_bts"
-        elif self.config.get("moe_method") == "traditional":
-            file_path = "_traditional"
-
-        # The routed methods share the load balancing loss
-        parts = ["_routing", file_path] if file_path in ("_btx", "_traditional") else [file_path]
-        parg_moe = ""
-        for part in parts:
-            with open(
-                os.path.join(script_directory, f"{part}.py"), "r", encoding="utf-8"
-            ) as fh:
-                parg_moe += fh.read() + "\n\n"
-        script_moe = script_init_mlp + "\n\n" + parg_moe
-
-        replacement = r"ExtendedModelOutputWithPast(BaseModelOutputWithPast)"
-        new_output = "ExtendedModelOutputWithPast"
-        old_output = "BaseModelOutputWithPast"
-
-        # Add the new Extended Model definition before the first class
-        lines = script_moe.splitlines()
-        new_lines = []
-        inserted = False
-        output_block = f"""
-@dataclass
-class {replacement}:
-    \"\"\"
-    Extended model output with an additional float field: `loss_lb`.
-
-    Args:
-        loss_lb (float, optional):
-            An extra float value added to the output, e.g., for loss or scoring.
-    \"\"\"
-
-    loss_lb: Optional[float] = None
-
-"""
-        for i, line in enumerate(lines):
-            stripped = line.lstrip()
-            # Detect first dataclass definition
-            if not inserted and (
-                stripped.startswith("@dataclass")
-                and not lines[i + 1].lstrip().startswith(f"class {old_output}")
-            ):
-                # Insert the block before this line
-                new_lines.append(output_block)
-                inserted = True
-            if not inserted and (
-                stripped.startswith("class ")
-                and not stripped.startswith(f"class {old_output}")
-            ):
-                # Insert the block before this line
-                new_lines.append(output_block)
-                inserted = True
-            new_lines.append(line)
-        script_output = "\n".join(new_lines)
-
-        # Replace the old output occurences with the new output
-        lines = script_output.split("\n")
-        for i, line in enumerate(lines):
-            if (
-                line.strip().startswith("class ")
-                or line.strip().startswith("from ")
-                or line.strip() == f"{old_output},"
-            ):
-                # skip replacement on class definition line
-                continue
-            lines[i] = line.replace(old_output, new_output)
-        script_output = "\n".join(lines)
-
-        # To Check later
-        # Add dataclass import if not present
-        if "from dataclasses import dataclass" not in script_output:
-            script_output = script_output.replace(
-                "import torch\n", "import torch\nfrom dataclasses import dataclass\n"
-            )
-
-        class_pattern_decoder = (
-            rf"(class {class_model}DecoderLayer\(.*?\):\n(.*?))(?=\nclass |\Z)"
-        )
-        script_decoder = re.sub(
-            class_pattern_decoder,
-            lambda match: _modify_decoder(match, self.config["moe_method"]),
-            script_output,
-            flags=re.DOTALL,
-        )
-
-        class_pattern_model = (
-            rf"(class {class_model}Model\(.*?\):\n(.*?))(?=\nclass |\Z)"
-        )
-        class_pattern_textmodel = (
-            rf"(class {class_model}TextModel\(.*?\):\n(.*?))(?=\nclass |\Z)"
-        )
-        script_model = re.sub(
-            class_pattern_model,
-            lambda match: _modify_model(match),
-            script_decoder,
-            flags=re.DOTALL,
-        )
-        script_model = re.sub(
-            class_pattern_textmodel,
-            lambda match: _modify_model(match, update_kv=True),
-            script_model,
-            flags=re.DOTALL,
-        )
-
-        ##### CausalLM Class #####
-        class_pattern_causallm = (
-            rf"(class {class_model}ForCausalLM\(.*?\):\n(.*?))(?=\nclass |\Z)"
-        )
-
-        def patch_loss_handling(class_body: str) -> str:
-            pattern = r"(^[ \t]*)if labels is not None:\n((?:\1[ \t]+.*\n)+)"
-
-            def replacer(match):
-                indent = match.group(1)
-                block = match.group(2)
-                line_to_append = "loss = loss + (getattr(outputs, 'loss_lb', 0) or 0)"
-                appended_block = block + f"{indent}    {line_to_append}\n"
-                return f"{indent}if labels is not None:\n{appended_block}"
-
-            return re.sub(pattern, replacer, class_body, flags=re.MULTILINE)
-
-        script_causallm = re.sub(
-            class_pattern_causallm,
-            lambda match: match.group(1).replace(
-                match.group(2), patch_loss_handling(match.group(2))
-            ),
-            script_model,
-            flags=re.DOTALL,
-        )
-
-        # Formatting the script with the black formatter
-        script_causallm = black.format_str(script_causallm, mode=black.FileMode())
-
-        with open(modeling_file, "w") as f:
-            f.write(script_causallm)
-
-        if "auto_map" in config.keys():
-            for key in config["auto_map"].keys():
-                config["auto_map"][key] = config["auto_map"][key].split("--")[-1]
-                # Replace the function names with the new model_type
-                config["auto_map"][key] = _rename_model_type(
-                    config["auto_map"][key],
-                    old_model_type,
-                    self.config["model_type"],
-                )
-        # For models not providing an explicit auto-classes redirection
-        else:
-            if f"{class_model}ForCausalLM" in script_moe:
-                causal = f"{class_model}ForCausalLM"
-            else:
-                causal = f"{class_model}LMHeadModel"
-
-            new_model_type = self.config["model_type"]
-
-            AutoConfig = f"configuration_{new_model_type}.{class_model_text}Config"
-
-            config["auto_map"] = {
-                "AutoConfig": AutoConfig,
-                "AutoModel": f"modeling_{new_model_type}." f"{class_model}Model",
-                "AutoModelForCausalLM": f"modeling_{new_model_type}.{causal}",
-                "AutoModelForQuestionAnswering": f"modeling_{new_model_type}.{class_model}ForQuestionAnswering",
-                "AutoModelForSequenceClassification": f"modeling_{new_model_type}.{class_model}ForSequenceClassification",
-                "AutoModelForTokenClassification": f"modeling_{new_model_type}.{class_model}ForTokenClassification",
-            }
-
-        config["moe_method"] = self.config["moe_method"]
-        if "gemma" in old_model_type:
-            config["attn_implementation"] = "eager"
-            config["_attn_implementation"] = "eager"
-
-        if class_model_text != class_model:
-            config["model_type"] = f"{config['model_type']}_text"
-        json.dump(config, open(f"{checkpoint_path}/config.json", "w"), indent=1)
-
-        # Add Generation Config for the merged model
-        json.dump(
-            generation_config,
-            open(f"{checkpoint_path}/generation_config.json", "w"),
-            indent=1,
-        )
-
-        # Modify the configuration file
+        ##### Modeling and configuration files #####
+        model_class, config_class = self.model_classes[self.select_moe_model_config_idx]
+        write_modeling_files(checkpoint_path, model_type, model_class, config_class)
+        with open(os.path.join(checkpoint_path, "config.json"), "w") as f:
+            json.dump(config, f, indent=1)
+        # Only the values that are set: transformers 5 lists every field, and its null
+        # values are rejected by transformers 4
+        generation_config = {k: v for k, v in generation_config.items() if v is not None}
+        with open(os.path.join(checkpoint_path, "generation_config.json"), "w") as f:
+            json.dump(generation_config, f, indent=1)
         print(f"checkpoint saved at {checkpoint_path}")
+
+
+def write_modeling_files(checkpoint_path, model_type, model_class, config_class):
+    """
+    This function writes the modeling and configuration files of a merged model:
+    small files subclassing the transformers classes of the experts, so the merged
+    model follows the installed transformers version.
+
+    Parameters
+    ----------
+    checkpoint_path: str
+        The directory of the merged model.
+    model_type: str
+        The model type of the merged model.
+    model_class: str
+        The transformers causal LM class of the experts, e.g. "Qwen3ForCausalLM".
+    config_class: str
+        The transformers configuration class of the experts, e.g. "Qwen3Config".
+    """
+    for name in (model_class, config_class):
+        if not hasattr(transformers, name):
+            raise ValueError(
+                f"{name} is not a transformers class: experts with custom (remote) "
+                "code are not supported."
+            )
+
+    configuration = CONFIGURATION_TEMPLATE.format(config_class=config_class, model_type=model_type)
+    with open(os.path.join(checkpoint_path, f"configuration_{model_type}.py"), "w") as f:
+        f.write(configuration)
+
+    template = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modeling_template.py")
+    with open(template, "r", encoding="utf-8") as f:
+        modeling = f.read()
+    modeling = modeling.replace("__CONFIG_MODULE__", f"configuration_{model_type}")
+    modeling = modeling.replace("__BASE_MODEL_CLASS__", model_class)
+    with open(os.path.join(checkpoint_path, f"modeling_{model_type}.py"), "w") as f:
+        f.write(modeling)
+
+
+def _make_tokenizer_config_portable(checkpoint_path):
+    """
+    transformers 5 saves the extra special tokens as a list, which transformers 4 reads
+    as a mapping: they are stored under `additional_special_tokens`, read by both.
+    """
+    path = os.path.join(checkpoint_path, "tokenizer_config.json")
+    if not os.path.isfile(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        tokenizer_config = json.load(f)
+    extra = tokenizer_config.get("extra_special_tokens")
+    if not isinstance(extra, list):
+        return
+    tokenizer_config.pop("extra_special_tokens")
+    if extra:
+        additional = tokenizer_config.get("additional_special_tokens") or []
+        tokenizer_config["additional_special_tokens"] = additional + [t for t in extra if t not in additional]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(tokenizer_config, f, indent=2, ensure_ascii=False)
+
+
+def _add_legacy_rope_fields(config):
+    """
+    transformers 5 stores the rotary embedding settings in `rope_parameters`, possibly per
+    attention type (Gemma3). transformers 4 reads `rope_theta` / `rope_scaling` (and
+    `rope_local_base_freq` for Gemma3) and would silently use its defaults: they are added
+    so that a model built with transformers 5 loads the same with transformers 4.
+    """
+    rope = config.get("rope_parameters")
+    if not isinstance(rope, dict):
+        return
+    per_attention = isinstance(rope.get("full_attention"), dict)
+    full = rope["full_attention"] if per_attention else rope
+    if "rope_theta" in full:
+        config.setdefault("rope_theta", full["rope_theta"])
+    scaling = {k: v for k, v in full.items() if k != "rope_theta"}
+    if scaling.get("rope_type", "default") != "default":
+        config.setdefault("rope_scaling", scaling)
+    if per_attention and isinstance(rope.get("sliding_attention"), dict):
+        local = rope["sliding_attention"].get("rope_theta")
+        if local is not None:
+            config.setdefault("rope_local_base_freq", local)
+
+
+CONFIGURATION_TEMPLATE = '''"""
+Configuration of a Mixture-of-Experts model built with MixtureKit: the configuration
+of the experts with the Mixture-of-Experts fields (moe_method, num_experts, ...).
+"""
+
+import transformers
+
+
+class MixtureKitConfig(getattr(transformers, "{config_class}")):
+    model_type = "{model_type}"
+
+
+# save_pretrained copies this file next to the weights
+MixtureKitConfig.register_for_auto_class()
+'''
 
 
 def build_moe(
