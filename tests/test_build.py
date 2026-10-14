@@ -377,3 +377,108 @@ def test_bts_rejects_experts_with_different_vocabularies(experts, tmp_path, monk
                 torch_dtype=torch.float32,
                 streaming=streaming,
             )
+
+
+def _without_dropout(model):
+    for module in model.modules():
+        if isinstance(module, torch.nn.Dropout):
+            module.p = 0.0
+    return model
+
+
+@pytest.mark.parametrize("family", ["llama", "gemma3"])
+def test_bts_two_forwards_before_backward_with_checkpointing(experts, build, family):
+    """Each forward pass keeps its own expert embeddings when the layers are recomputed."""
+    other = PROMPT.flip(-1)
+    grads = []
+    for checkpointing in (False, True):
+        model = _without_dropout(load(build("bts", experts[family], f"{family}bts")))
+        if checkpointing:
+            model.gradient_checkpointing_enable()
+        model.train()
+        loss = model(input_ids=PROMPT, labels=PROMPT).loss + model(input_ids=other, labels=other).loss
+        loss.backward()
+        grads.append({n: p.grad for n, p in model.named_parameters() if p.grad is not None})
+    assert grads[0].keys() == grads[1].keys()
+    for name in grads[0]:
+        assert torch.allclose(grads[0][name], grads[1][name], atol=1e-6), name
+
+
+def test_bts_needs_input_ids(experts, build):
+    model = load(build("bts", experts["llama"], "llamabts")).eval()
+    with torch.no_grad():
+        embeds = model.get_input_embeddings()(PROMPT)
+        model(input_ids=PROMPT)  # the embeddings of another forward pass are not reused
+        with pytest.raises(ValueError, match="input_ids"):
+            model(inputs_embeds=embeds)
+
+
+@pytest.mark.parametrize("family", ["llama", "gemma3"])
+def test_bts_with_embedding_noise(experts, build, family):
+    """Hooks changing the hub embedding (NEFTune, PEFT on the embeddings) keep the expert streams."""
+    model = _without_dropout(load(build("bts", experts[family], f"{family}bts")))
+    reference = model(input_ids=PROMPT, labels=PROMPT).loss
+    handle = model.get_input_embeddings().register_forward_hook(lambda module, args, output: output + 0.0)
+    model.gradient_checkpointing_enable()
+    model.train()
+    loss = model(input_ids=PROMPT, labels=PROMPT).loss
+    loss.backward()
+    handle.remove()
+    assert torch.allclose(loss, reference, atol=1e-6)
+
+
+def test_bts_streams_keep_their_shared_keys_and_values(experts, tmp_path, monkeypatch):
+    """Gemma 4 layers reusing the keys and values of earlier layers read those of their stream."""
+    transformers = pytest.importorskip("transformers")
+    if not hasattr(transformers, "Gemma4ForCausalLM"):
+        pytest.skip("Gemma 4 needs a recent transformers version")
+    from conftest import family_config, make_tokenizer
+
+    tokenizer = make_tokenizer()
+    config = family_config(
+        "gemma4", len(tokenizer),
+        layer_types=["sliding_attention", "full_attention"] * 2, num_kv_shared_layers=2,
+    )
+    paths = []
+    for idx in range(2):
+        torch.manual_seed(idx)
+        path = tmp_path / f"kvshared_{idx}"
+        transformers.AutoModelForCausalLM.from_config(config).save_pretrained(path)
+        tokenizer.save_pretrained(path)
+        paths.append(str(path))
+    monkeypatch.chdir(tmp_path)
+    # A single stitch layer, on the last block: the hub is the first expert before it
+    build_moe(moe_config("bts", "kvshared", paths, stitch_freq=5), torch_dtype=torch.float32)
+    model = load("models_merge/kvshared").eval()
+    hub = load(paths[0]).eval()
+    outputs = {}
+    for name, m in (("moe", model), ("hub", hub)):
+        m.model.layers[2].register_forward_hook(
+            lambda module, args, output, name=name: outputs.__setitem__(name, output[0] if isinstance(output, tuple) else output)
+        )
+    with torch.no_grad():
+        output = model(input_ids=PROMPT, return_shared_kv_states=True)
+        hub(input_ids=PROMPT)
+    # The store returned keeps the layout of transformers (layer type -> keys and values),
+    # in the transformers versions that return it
+    assert set(getattr(output, "shared_kv_states", None) or {}) <= set(config.layer_types)
+    hidden_size = config.hidden_size
+    assert (outputs["moe"][..., :hidden_size] - outputs["hub"]).abs().max() < 1e-5
+
+
+def test_btx_without_any_routed_layer_raises(experts, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = moe_config("btx", "norouter", experts["llama"], router_layers=["mlp.missing_proj"])
+    with pytest.raises(ValueError, match="router_layers_index"):
+        build_moe(config, torch_dtype=torch.float32)
+    assert not os.path.exists("models_merge/norouter/config.json")
+
+
+def test_saving_again_keeps_the_rotary_fields_of_transformers_4(experts, build, tmp_path):
+    """A model trained (saved again) with transformers 5 still loads the same with transformers 4."""
+    built = json.load(open(os.path.join(build("btx", experts["llama"], "llamabtx"), "config.json")))
+    load(build("btx", experts["llama"], "llamabtx")).save_pretrained(tmp_path / "saved")
+    saved = json.load(open(tmp_path / "saved" / "config.json"))
+    for key in ("rope_theta", "rope_scaling", "rope_local_base_freq"):
+        assert saved.get(key) == built.get(key), key
+    assert "rope_theta" in saved

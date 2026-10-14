@@ -26,6 +26,10 @@ pip install -e ".[vis]"     # + the routing visualizer (streamlit)
 
 A zip download of the repository installs the same way.
 
+> **Models**: tested with Llama 3, Qwen 2.5, Qwen 3, Qwen 3.5 and Gemma 3 / Gemma 4 experts
+> (multimodal checkpoints are merged through their language model). Qwen 3.5 and Gemma 4
+> need a transformers 5 version that includes them.
+>
 > **Requirements**: Python ≥ 3.10 · PyTorch ≥ 2.5 · transformers 4.52 to 5.x.
 > Every transformers minor release from 4.52 to 5.19 is tested. Merged models subclass the
 > installed transformers classes, so they load with `AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True)`
@@ -185,6 +189,9 @@ upgrade_checkpoint("models_merge/gemmax", base_model_class="Gemma3ForCausalLM")
 * BTS: `output_hidden_states` returns the hub and expert streams packed on the last
   dimension; with transformers 5 the outputs of the expert layers are listed too.
 * The load balancing loss counts padding tokens.
+* BTS with Gemma 4: only the hub's per-layer embeddings are kept, and the expert streams use
+  the hub's per-layer inputs, so an expert stream differs slightly from its original model.
+* BTS needs `input_ids` (`inputs_embeds` alone are not supported).
 * BTS with `device_map="auto"` across several GPUs: a hub layer and its expert layers
   (`model.expert_layers.N`) should be on the same device; pass an explicit `device_map`.
 * trl ≥ 1.15 requires Triton (Linux) for training.

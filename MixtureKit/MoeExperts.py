@@ -109,7 +109,8 @@ class MoeExperts:
         # Traditional MoE converts the feed-forward block of every layer
         if self.config.get("moe_method") != "traditional" and not self._routes_block(block_ids[0]):
             return False
-        if "mlp" not in param_name and "self_attn" not in param_name:
+        # Feed-forward and attention projections (linear_attn: Qwen3.5's linear-attention blocks)
+        if not any(part in param_name for part in ("mlp", "self_attn", "linear_attn")):
             return False
         matched = [layer for layer in router_layers if f".{layer}." in param_name]
         self._matched_router_layers.update(matched)
@@ -136,10 +137,13 @@ class MoeExperts:
         prefix, _, leaf = name.rpartition(".")
         slot = expert_idx - 1
         if "model.layers." in prefix:
-            # e.g. "19.self_attn.q_proj" -> "19", "self_attn.q_proj"
-            block_id, sub_path = prefix.split("model.layers.", 1)[1].split(".", 1)
-            return f"model.expert_layers.{block_id}.{slot}.{sub_path}.{leaf}"
-        if "embed_tokens" in prefix:
+            # e.g. "19.self_attn.q_proj" -> "19", "self_attn.q_proj"; a parameter of the layer
+            # itself (e.g. Gemma 4's layer scalar) has no sub-path
+            block_id, _, sub_path = prefix.split("model.layers.", 1)[1].partition(".")
+            parts = [f"model.expert_layers.{block_id}.{slot}", sub_path, leaf]
+            return ".".join(part for part in parts if part)
+        # The token embedding only (not e.g. Gemma 4's per-layer embeddings)
+        if prefix.split(".")[-1] == "embed_tokens":
             return f"model.expert_embed_tokens.{slot}.{leaf}"
         return None
 
@@ -551,6 +555,11 @@ class MoeExperts:
         if self.config.get("moe_method") != "btx":
             return router_layers
         missing = [layer for layer in router_layers if layer not in self._matched_router_layers]
+        if len(missing) == len(router_layers):
+            raise ValueError(
+                f"None of the router layers {router_layers} is in the selected blocks of the "
+                "experts: check router_layers and router_layers_index"
+            )
         if missing:
             print(f"Router layers not found in the experts, ignored: {missing}")
         return [layer for layer in router_layers if layer in self._matched_router_layers]
@@ -599,7 +608,7 @@ class MoeExperts:
                 "_name_or_path": "",
             }
         )
-        _add_legacy_rope_fields(config)
+        _add_legacy_rope_fields(config, self.model_classes[self.select_moe_model_config_idx][1])
         if moe_method == "bts":
             config["stitch_freq"] = self.config.get("stitch_freq", 5)
             if self.config.get("stitch_layers_index"):
@@ -712,7 +721,7 @@ def _make_tokenizer_config_portable(checkpoint_path):
         json.dump(tokenizer_config, f, indent=2, ensure_ascii=False)
 
 
-def _add_legacy_rope_fields(config):
+def _legacy_rope_fields(config):
     """
     transformers 5 stores the rotary embedding settings in `rope_parameters`, possibly per
     attention type (Gemma3). transformers 4 reads `rope_theta` / `rope_scaling` (and
@@ -721,18 +730,43 @@ def _add_legacy_rope_fields(config):
     """
     rope = config.get("rope_parameters")
     if not isinstance(rope, dict):
-        return
+        return {}
+    legacy = {}
     per_attention = isinstance(rope.get("full_attention"), dict)
     full = rope["full_attention"] if per_attention else rope
     if "rope_theta" in full:
-        config.setdefault("rope_theta", full["rope_theta"])
+        legacy["rope_theta"] = full["rope_theta"]
     scaling = {k: v for k, v in full.items() if k != "rope_theta"}
     if scaling.get("rope_type", "default") != "default":
-        config.setdefault("rope_scaling", scaling)
+        legacy["rope_scaling"] = scaling
     if per_attention and isinstance(rope.get("sliding_attention"), dict):
         local = rope["sliding_attention"].get("rope_theta")
         if local is not None:
-            config.setdefault("rope_local_base_freq", local)
+            legacy["rope_local_base_freq"] = local
+    return {k: v for k, v in legacy.items() if k not in config}
+
+
+def _add_legacy_rope_fields(config, config_class=None):
+    """
+    Adds the transformers 4 rotary fields (see _legacy_rope_fields) when the configuration
+    class of the experts reads them back without changing the rotary settings. Families that
+    only exist in transformers 5 (e.g. Gemma 4) would read them as an override.
+    """
+    legacy = _legacy_rope_fields(config)
+    if not legacy:
+        return
+    cls = getattr(transformers, config_class, None) if config_class else None
+    if cls is not None:
+        try:
+            before = cls.from_dict(dict(config)).to_dict().get("rope_parameters")
+            after = cls.from_dict({**config, **legacy}).to_dict().get("rope_parameters")
+        except Exception:
+            return
+        if before != after:
+            return
+    config.update(legacy)
+    # Saved again by the configuration class when transformers 5 saves the model (training)
+    config["mixturekit_legacy_rope"] = legacy
 
 
 CONFIGURATION_TEMPLATE = '''"""
@@ -745,6 +779,13 @@ import transformers
 
 class MixtureKitConfig(getattr(transformers, "{config_class}")):
     model_type = "{model_type}"
+
+    def to_dict(self):
+        output = super().to_dict()
+        # The rotary fields read by transformers 4, which transformers 5 does not save
+        for key, value in (output.get("mixturekit_legacy_rope") or {{}}).items():
+            output.setdefault(key, value)
+        return output
 
 
 # save_pretrained copies this file next to the weights

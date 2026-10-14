@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 import torch
+import transformers
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import (
     Gemma3Config,
@@ -43,7 +44,7 @@ def make_tokenizer():
     )
 
 
-def family_config(family, vocab_size):
+def family_config(family, vocab_size, **extra):
     common = dict(
         vocab_size=vocab_size,
         hidden_size=32,
@@ -64,10 +65,20 @@ def family_config(family, vocab_size):
         return Gemma3TextConfig(
             head_dim=16, sliding_window=4, sliding_window_pattern=2, **common
         )
+    if family == "qwen3_5":  # linear-attention and full-attention blocks
+        return transformers.Qwen3_5TextConfig(head_dim=16, **common)
+    if family == "gemma4":  # per-layer embeddings
+        return transformers.Gemma4TextConfig(head_dim=16, sliding_window=4, **common, **extra)
     raise ValueError(family)
 
 
-FAMILIES = ["llama", "qwen3", "gemma3"]
+# Recent families, tested with the transformers versions that have them
+NEW_FAMILIES = [
+    family
+    for family, cls in [("qwen3_5", "Qwen3_5ForCausalLM"), ("gemma4", "Gemma4ForCausalLM")]
+    if hasattr(transformers, cls)
+]
+FAMILIES = ["llama", "qwen3", "gemma3"] + NEW_FAMILIES
 
 
 @pytest.fixture(scope="session")
