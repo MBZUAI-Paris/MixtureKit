@@ -2,7 +2,7 @@
 <img alt='MixtureKit logo' src='logo.png' width='220' align='right' />
 </h1>
 
-[![made-with-python](https://img.shields.io/badge/Made%20with-Python-green.svg)](#python)
+[![made-with-python](https://img.shields.io/badge/Made%20with-Python-green.svg)](#python) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb)
 
 `MixtureKit` package provides high-level helper functions to merge pretrained and finetuned models
 into a unified framework, integrating Mixture-of-Experts (MoE) advanced architectures.
@@ -39,6 +39,8 @@ pytest
 ```
 
 ---
+
+**Try it in 15 minutes on a free GPU:** the [Colab notebook](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb) merges two Qwen3-0.6B models, trains the routers and shows the routing.
 
 ## Command line
 
