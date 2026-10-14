@@ -20,10 +20,10 @@ jobs:
           - {python: "3.12", transformers: "5.19.0"}
     name: py${{ matrix.python }} / transformers ${{ matrix.transformers }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0  # the version is read from the git tags
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
