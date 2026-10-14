@@ -20,7 +20,10 @@ def _arguments():
     parser.add_argument("model", nargs="?", default="")
     parser.add_argument("--device", default=None)
     args, _ = parser.parse_known_args(sys.argv[1:])
-    # The environment wins, e.g. in a Hugging Face Space: MIXTUREKIT_MODEL=org/model
+    # The environment wins and fixes the model, e.g. in a Hugging Face Space:
+    # MIXTUREKIT_MODEL=org/model (a merged model runs its own modeling code, so visitors of a
+    # public app must not choose it)
+    args.fixed = bool(os.environ.get("MIXTUREKIT_MODEL"))
     args.model = os.environ.get("MIXTUREKIT_MODEL") or args.model
     return args
 
@@ -36,7 +39,7 @@ def main():
 
     with st.sidebar:
         st.header("Model")
-        model_id = st.text_input("Merged model (directory or Hub id)", value=args.model)
+        model_id = st.text_input("Merged model (directory or Hub id)", value=args.model, disabled=args.fixed)
         devices = available_devices()
         if args.device and args.device not in devices:
             devices.insert(0, args.device)
@@ -52,7 +55,7 @@ def main():
         st.error(f"Cannot load {model_id} on {device}: {error}")
         return
 
-    text = st.text_area("Text", value=DEFAULT_TEXT, height=120)
+    text = st.text_area("Text", value=DEFAULT_TEXT, height=120, max_chars=2000 if args.fixed else None)
     if not text.strip():
         st.warning("Type some text to route.")
         return

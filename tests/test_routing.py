@@ -84,21 +84,20 @@ def test_command_writes_an_html_view(experts, build, tmp_path, capsys):
     assert "expert_0" in capsys.readouterr().out
 
 
-def test_streamlit_app_runs(experts, build):
+@pytest.mark.parametrize("app", ["MixtureKit/visualizer_app.py", "space/app.py"])
+def test_streamlit_app_runs(experts, build, monkeypatch, app):
     pytest.importorskip("streamlit")
     pytest.importorskip("pandas")
     from streamlit.testing.v1 import AppTest
     import os
 
     path = build("btx", experts["llama"], "llamabtx")
-    app = os.path.join(os.path.dirname(__file__), "..", "MixtureKit", "visualizer_app.py")
-    os.environ["MIXTUREKIT_MODEL"] = path
-    try:
-        at = AppTest.from_file(app, default_timeout=120).run()
-    finally:
-        del os.environ["MIXTUREKIT_MODEL"]
+    monkeypatch.setenv("MIXTUREKIT_MODEL", path)
+    at = AppTest.from_file(os.path.join(os.path.dirname(__file__), "..", app), default_timeout=120).run()
     assert not at.exception, at.exception
     assert at.title[0].value.startswith("Which expert")
+    # The model set by the environment cannot be changed by the visitors (it runs its own code)
+    assert at.sidebar.text_input[0].disabled
 
 
 def test_token_texts_keep_spaces_symbols_and_typed_special_tokens(experts, build):
