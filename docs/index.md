@@ -23,6 +23,8 @@ mixturekit visualize qwen3moe2x-trained                    # see which expert ev
 - **Router training** with a load balancing loss, optionally with LoRA on the experts.
 - **Routing visualizer**: an app, a shareable HTML page, or inline in notebooks.
 - **Hub ready**: `mixturekit push` uploads the model with a generated model card.
+- **Native export**: a traditional MoE of Llama, Mistral or Qwen3 experts becomes a Mixtral
+  or Qwen3-MoE model, ready for GGUF and llama.cpp, vLLM or MLX. See {doc}`export`.
 
 [Try it in Colab](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb):
 merge two Qwen3-0.6B models, train the routers and look at the routing in about 15 minutes on a free GPU.
@@ -37,6 +39,7 @@ configuration
 cli
 training
 visualizer
+export
 upgrade
 ```
 

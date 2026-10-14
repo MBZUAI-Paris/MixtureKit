@@ -22,6 +22,13 @@
    :members: model_card, write_model_card, push_to_hub
 ```
 
+## Export
+
+```{eval-rst}
+.. automodule:: MixtureKit.export
+   :members: export_native, native_config
+```
+
 ## Training
 
 ```{eval-rst}

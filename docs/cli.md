@@ -7,6 +7,7 @@ mixturekit train CONFIG.yaml
 mixturekit visualize MODEL [--text TEXT] [--html FILE] [--device cuda|mps|cpu] [--port 8501]
 mixturekit card MODEL [--repo-id ORG/NAME]
 mixturekit push MODEL ORG/NAME [--private]
+mixturekit export MODEL OUTPUT
 ```
 
 `build`
@@ -29,3 +30,7 @@ mixturekit push MODEL ORG/NAME [--private]
   (checkpoints, optimizer) and the local build configuration are not uploaded; the card
   holds the build configuration with the local paths removed. `--private` refuses to
   upload into an existing public repository.
+
+`export`
+: Writes a traditional MoE of Llama, Mistral or Qwen3 experts as a native Mixtral or
+  Qwen3-MoE model (see {doc}`export`).
