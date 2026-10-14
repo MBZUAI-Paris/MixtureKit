@@ -81,6 +81,7 @@ def _modify_decoder(match, moe_method):
     """
     This function modifies the DecoderLayer class with the following steps:
 
+    0. Store `config` and `layer_idx` on the layer
     1. Expose `loss_lb_attn` from the attention call
     2. Add gate & softmax after class initialization
     3. Replace the single `self.mlp(...)` line with the MoE branch
@@ -96,6 +97,16 @@ def _modify_decoder(match, moe_method):
 
     # --- original Decoder body ---
     class_body = match.group(2)
+
+    # 0) keep the config and the block index, both used by the MoE and BTS forward
+    stored_attrs = ""
+    if not re.search(r"self\.config\s*=\s*config\b", class_body):
+        stored_attrs += "\n        self.config = config"
+    if not re.search(r"self\.layer_idx\s*=\s*layer_idx\b", class_body):
+        stored_attrs += "\n        self.layer_idx = layer_idx"
+    class_body = class_body.replace(
+        "super().__init__()\n", "super().__init__()" + stored_attrs + "\n", 1
+    )
 
     # 1) expose attention loss
     class_body = class_body.replace(
@@ -120,13 +131,16 @@ def _modify_decoder(match, moe_method):
         global cache_selected_experts
         weights, selected_experts = torch.topk(self.gate(hidden_states), self.config.num_experts_per_tok)
         weights = torch.softmax(weights, dim=-1, dtype=torch.float).to(hidden_states.dtype)
-        hidden_accum = torch.zeros_like(hidden_states)
+        # Every expert reads the same normalized input, the outputs are accumulated apart
+        moe_out = torch.zeros_like(hidden_states)
+        loss_lb_mlp = 0
         for ix in range(self.config.num_experts):
             batch_idx, token_idx, expert_idx = torch.where(selected_experts == ix)
             cache_selected_experts = {'batch_idx': batch_idx, 'token_idx': token_idx, 'expert_idx': ix}
-            mlp_out, loss_lb_mlp = self.mlp(hidden_states)
-            hidden_accum[batch_idx, token_idx] += mlp_out * weights[batch_idx, token_idx, expert_idx].unsqueeze(-1)
-            hidden_states = hidden_accum
+            mlp_out, expert_loss_lb = self.mlp(hidden_states)
+            moe_out[batch_idx, token_idx] += mlp_out * weights[batch_idx, token_idx, expert_idx].unsqueeze(-1)
+            loss_lb_mlp = loss_lb_mlp + expert_loss_lb
+        hidden_states = moe_out
 """
         class_body = re.sub(
             r"^[ \t]*hidden_states\s*=\s*self\.mlp\([^\n]*\)\n",
@@ -276,12 +290,21 @@ def _patch_stitches(m: re.Match, model_type) -> str:
         inner_block = "\n".join("        " + line for line in raw_block.splitlines())
         inner_block = inner_block.replace("layer_outputs", "e_out")
         inner_block = inner_block.replace("hidden_states", "exp_in")
-        # inner_block = inner_block.replace(
-        #     "past_key_values,", "past_key_values[e_idx+1],"
-        # )
+        # Each expert stream attends to its own keys/values
+        inner_block = inner_block.replace("past_key_values", "expert_caches[e_idx]")
         inner_block = re.sub(
             r"decoder_layer(?!\.attention_type)", "e_layer", inner_block
         )
+
+        # Create the expert caches before the hub layers fill the shared cache
+        for idx, line in enumerate(lines):
+            if line.lstrip().startswith("for decoder_layer in self.layers"):
+                indent = line[: len(line) - len(line.lstrip())]
+                lines.insert(
+                    idx,
+                    f"{indent}expert_caches = bts_expert_caches(past_key_values, self.config.num_experts - 1)",
+                )
+                break
 
         # Add forward pass handling for stitches
         for idx, line in enumerate(lines):
