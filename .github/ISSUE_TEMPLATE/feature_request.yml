@@ -1,0 +1,16 @@
+name: Feature or model family request
+description: A new feature, model family or composition method
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you want to do
+      description: The use case, e.g. the experts you want to merge.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution
+      description: How it could work, links to papers or code.

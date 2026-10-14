@@ -130,7 +130,7 @@ pip install -e ".[doc]" && sphinx-build docs docs/_build/html
 ```
 
 Requirements: Python 3.10 or later, PyTorch 2.5 or later, transformers 4.52 to 5.x.
-Issues and pull requests are welcome; please open an issue first for larger changes.
+Issues and pull requests are welcome: see [CONTRIBUTING.md](https://github.com/MBZUAI-Paris/MixtureKit/blob/main/CONTRIBUTING.md).
 
 ## Citation
 
