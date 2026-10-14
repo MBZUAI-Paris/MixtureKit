@@ -57,6 +57,9 @@ class MoeExperts:
         self.streaming = streaming
         # An empty list means that every transformer block is converted
         self.config.setdefault("router_layers_index", [])
+        # The defaults of `mixturekit build`
+        self.config.setdefault("router_layers", [])
+        self.config.setdefault("num_experts_per_tok", 2)
 
         self.state_dict = {}
         # Streaming mode: the merged tensors as (name, shape, dtype, compute) entries
@@ -801,14 +804,15 @@ def build_moe(
     output_dir=None,
 ):
     """
-    This function builds the unified framework by merging the provided models
-    according to the configuration file. Please refer to the example for the
-    format of the configuration.
+    This function merges the experts into a Mixture-of-Experts model and writes it,
+    with its modeling files, to a directory that transformers loads with
+    `AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True)`.
 
     Parameters
     ----------
     config: dict
-        The configuration of the unified framework to build.
+        The merge: moe_method, model_type, experts and the other keys described in
+        the Configuration page of the documentation.
     torch_dtype: torch.dtype, default=torch.float16
         The datatype for loading and saving the weights.
     model_cls: type, default=AutoModelForCausalLM
@@ -821,10 +825,8 @@ def build_moe(
 
     Returns
     -------
-    The directory of the merged model.
-    References
-    ----------
-        .. footbibliography::
+    str
+        The directory of the merged model.
     """
     output_dir = output_dir or os.path.join("models_merge", config["model_type"])
     build_config = json.loads(json.dumps(config, default=str))  # kept as given

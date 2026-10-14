@@ -1,4 +1,4 @@
-# A BTX MoE of two Gemma 3 4B fine-tunes (French and medical), as in the README.
+# A BTX MoE of two Gemma 3 4B fine-tunes (French and medical), as in the Configuration page of the docs.
 #   mixturekit build examples/configs/btx_gemma3.yaml
 moe_method: btx
 model_type: gemmax                 # the name of the merged model (not a transformers model type)

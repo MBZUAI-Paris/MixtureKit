@@ -67,10 +67,12 @@ test = [
   "pytest>=8",
   "tokenizers",
 ]
-# Requirements necessary for building the documentation
+# The documentation: sphinx-build docs docs/_build/html
 doc = [
-  "sphinx-bootstrap-theme>=0.8.1",
-  "sphinx-gallery>=0.16.0",
+  "furo",
+  "myst-parser>=3",
+  "sphinx>=7",
+  "sphinx-copybutton",
 ]
 
 [project.scripts]
@@ -78,6 +80,7 @@ mixturekit = "MixtureKit.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/MBZUAI-Paris/MixtureKit"
+Documentation = "https://mbzuai-paris.github.io/MixtureKit/"
 Repository = "https://github.com/MBZUAI-Paris/MixtureKit"
 Issues = "https://github.com/MBZUAI-Paris/MixtureKit/issues"
 Paper = "https://arxiv.org/abs/2512.12121"

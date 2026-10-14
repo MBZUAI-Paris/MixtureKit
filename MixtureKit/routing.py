@@ -1,6 +1,6 @@
 """
 Token routing of a model merged with MixtureKit: which experts every token is sent to,
-layer by layer.
+layer by layer::
 
     from MixtureKit.routing import load_model, trace_routing
 
