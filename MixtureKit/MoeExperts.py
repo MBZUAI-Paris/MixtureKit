@@ -20,7 +20,7 @@ class MoeExperts:
     def __init__(
         self,
         config,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float16,
         device="cpu",
         device_map=None,
         max_shard_size="9GB",
@@ -33,7 +33,7 @@ class MoeExperts:
         ----------
         config: dict
             The configuration required to setup the composer.
-        torch_dtype: torch.dtype, default=torch.bfloat16
+        torch_dtype: torch.dtype, default=torch.float16
             The datatype for loading and saving the weights.
         device: str, default="cpu"
             The device to load the model to.
@@ -798,7 +798,7 @@ MixtureKitConfig.register_for_auto_class()
 
 def build_moe(
     config,
-    torch_dtype=torch.bfloat16,
+    torch_dtype=torch.float16,
     model_cls=AutoModelForCausalLM,
     streaming=True,
     output_dir=None,
@@ -813,7 +813,7 @@ def build_moe(
     config: dict
         The merge: moe_method, model_type, experts and the other keys described in
         the Configuration page of the documentation.
-    torch_dtype: torch.dtype, default=torch.bfloat16
+    torch_dtype: torch.dtype, default=torch.float16
         The datatype for loading and saving the weights.
     model_cls: type, default=AutoModelForCausalLM
         The class used to load the experts, e.g. for models whose architecture is not mapped by the transformers auto classes.
