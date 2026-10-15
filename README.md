@@ -148,7 +148,6 @@ If MixtureKit is useful in your work, please cite the [paper](https://arxiv.org/
 
 ## Acknowledgements and license
 
-MixtureKit builds on [Branch-Train-MiX](https://arxiv.org/abs/2403.07816),
-[Branch-Train-Stitch](https://arxiv.org/abs/2502.00075) and ideas from
-[mergoo](https://github.com/Leeroo-AI/mergoo). It is released under the
+MixtureKit builds on [Branch-Train-MiX](https://arxiv.org/abs/2403.07816) and
+[Branch-Train-Stitch](https://arxiv.org/abs/2502.00075). It is released under the
 [BSD 3-Clause License](https://github.com/MBZUAI-Paris/MixtureKit/blob/main/LICENSE).
