@@ -41,7 +41,8 @@ laptop; training the routers wants a GPU.
 </p>
 
 **Try it in 15 minutes on a free GPU:** the [Colab notebook](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb)
-merges two Qwen3-0.6B models, trains the routers and shows the routing.
+merges two Qwen3-0.6B models, trains the routers and shows the routing. The
+[tutorial](https://huggingface.co/blog/AC-723/build-your-own-mixture-of-experts-from-two-fine-tu) walks through it step by step.
 
 ## Why MixtureKit
 
