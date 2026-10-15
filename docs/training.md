@@ -6,7 +6,7 @@ trained. With `use_lora: true`, LoRA adapters are also trained on the projection
 `target_modules` (by default `q_proj`, `k_proj`, `v_proj` and `o_proj`).
 
 ```bash
-pip install "mixturekit[train] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+pip install "mixturekit[train]"
 mixturekit train config_training.yaml
 ```
 

@@ -1,1 +1,1 @@
-mixturekit[vis] @ git+https://github.com/MBZUAI-Paris/MixtureKit
+mixturekit[vis]>=1.1
