@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use MixtureKit, please cite the paper below."
+title: "MixtureKit"
+abstract: "A general framework for composing, training, and visualizing Mixture-of-Experts models from pretrained Hugging Face checkpoints (BTX, BTS and traditional MoE)."
+type: software
+authors:
+  - family-names: Chamma
+    given-names: Ahmad
+  - family-names: Herraoui
+    given-names: Omar El
+  - family-names: Shang
+    given-names: Guokan
+license: BSD-3-Clause
+repository-code: "https://github.com/MBZUAI-Paris/MixtureKit"
+url: "https://mbzuai-paris.github.io/MixtureKit/"
+keywords:
+  - mixture-of-experts
+  - model merging
+  - branch-train-mix
+  - branch-train-stitch
+  - large language models
+preferred-citation:
+  type: article
+  title: "MixtureKit: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models"
+  authors:
+    - family-names: Chamma
+      given-names: Ahmad
+    - family-names: Herraoui
+      given-names: Omar El
+    - family-names: Shang
+      given-names: Guokan
+  journal: "arXiv preprint arXiv:2512.12121"
+  year: 2025
+  url: "https://arxiv.org/abs/2512.12121"
+  identifiers:
+    - type: other
+      value: "arXiv:2512.12121"
+      description: "arXiv identifier"
