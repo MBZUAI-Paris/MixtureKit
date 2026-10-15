@@ -28,6 +28,7 @@ mixturekit visualize qwen3moe2x-trained                    # see which expert ev
 
 [Try it in Colab](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb):
 merge two Qwen3-0.6B models, train the routers and look at the routing in about 15 minutes on a free GPU.
+The [tutorial](https://huggingface.co/blog/AC-723/build-your-own-mixture-of-experts-from-two-fine-tu) explains each step.
 
 ```{toctree}
 :maxdepth: 2
