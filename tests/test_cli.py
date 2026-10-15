@@ -53,7 +53,7 @@ def test_model_card(experts, tmp_path):
     assert "base_model" not in front  # local experts are not Hub models
     assert "my-org/llama-moe" in card and "trust_remote_code=True" in card
     assert "not trained yet" in card  # a fresh build has untrained routers
-    assert "mixturekit build config.yaml" in card and "@article{chamma2025mixturekit" in card
+    assert "mixturekit build config.yaml" in card and "@inproceedings{chamma-etal-2026-mixturekit" in card
 
     # Saving random routers does not make them trained; training marks the model
     model = load(str(output))
