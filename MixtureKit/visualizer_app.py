@@ -12,7 +12,7 @@ import sys
 import streamlit as st
 
 from MixtureKit.cli import DEFAULT_TEXT
-from MixtureKit.routing import available_devices, default_device, load_model, trace_routing
+from MixtureKit.routing import PALETTE, available_devices, default_device, load_model, trace_routing
 
 
 def _arguments():
@@ -55,7 +55,10 @@ def main():
         st.error(f"Cannot load {model_id} on {device}: {error}")
         return
 
-    text = st.text_area("Text", value=DEFAULT_TEXT, height=120, max_chars=2000 if args.fixed else None)
+    # A link can carry the text: ?text=...
+    initial = st.query_params.get("text") or DEFAULT_TEXT
+    limit = 2000 if args.fixed else None
+    text = st.text_area("Text", value=initial[:limit] if limit else initial, height=120, max_chars=limit)
     if not text.strip():
         st.warning("Type some text to route.")
         return
@@ -85,10 +88,13 @@ def main():
         st.dataframe(table, width="stretch")
     with right:
         st.subheader("Load of every expert per layer")
-        # Numbered labels: the chart sorts its categories as text
-        order = [f"{i:02d} · {name}" for i, name in enumerate(layer_names)]
+        # Numbered labels, padded: the chart sorts its categories as text
+        width = len(str(len(layer_names) - 1))
+        order = [f"{i:0{width}d} · {name}" for i, name in enumerate(layer_names)]
         load = pd.DataFrame(trace.layer_load().tolist(), columns=trace.experts, index=order)
-        st.bar_chart(load, horizontal=True, stack=True)
+        # The colours of the experts in the token view
+        colours = [PALETTE[i % len(PALETTE)] for i in range(len(trace.experts))]
+        st.bar_chart(load, horizontal=True, stack=True, color=colours)
         st.caption(
             "Mean weight of each expert over the tokens. A layer where one expert takes "
             "everything has collapsed routing."

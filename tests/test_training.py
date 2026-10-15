@@ -128,17 +128,3 @@ def test_aux_loss_output_is_unweighted(experts, build):
     labels[:, :6] = -100
     with_labels = model(input_ids=PROMPT, labels=labels, num_items_in_batch=torch.tensor(100)).aux_loss
     assert torch.allclose(without_labels, with_labels)
-
-
-@pytest.mark.parametrize("method", ["btx", "traditional"])
-def test_load_balancing_loss_leaves_out_padding(experts, build, method):
-    """Right padding: the routers see the same real tokens, the loss does not change."""
-    model = load(build(method, experts["qwen3"], f"qwen3{method}"))
-    model.train()
-    padded = torch.cat([PROMPT, torch.zeros(1, 6, dtype=PROMPT.dtype)], dim=1)
-    mask = torch.cat([torch.ones_like(PROMPT), torch.zeros(1, 6, dtype=PROMPT.dtype)], dim=1)
-    alone = model(input_ids=PROMPT, attention_mask=torch.ones_like(PROMPT)).aux_loss
-    with_padding = model(input_ids=padded, attention_mask=mask).aux_loss
-    unmasked = model(input_ids=padded).aux_loss
-    assert torch.allclose(alone, with_padding, atol=1e-6)
-    assert not torch.allclose(alone, unmasked, atol=1e-6)

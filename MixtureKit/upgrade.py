@@ -91,7 +91,7 @@ def upgrade_checkpoint(checkpoint_path, base_model_class):
     """
     This function upgrades, in place, a merged model built with an earlier MixtureKit
     version. Its weights are kept: only the configuration and modeling files are
-    replaced (only the modeling files for a model already in the current layout), the traditional MoE weights are renamed to the current layout and missing
+    replaced, the traditional MoE weights are renamed to the current layout and missing
     BTS stitch layers are added (identity projections, zero gates, as in training).
 
     Parameters
@@ -119,12 +119,7 @@ def upgrade_checkpoint(checkpoint_path, base_model_class):
     if moe_method not in ("btx", "traditional", "bts"):
         raise ValueError(f"{checkpoint_path} is not a model merged with MixtureKit")
     if config.get("base_model_class"):
-        # Already in the current layout: the modeling files are replaced by the ones of
-        # this version (e.g. models built from a development version)
-        current = config["base_model_class"]
-        current_config = getattr(transformers, current).config_class.__name__
-        write_modeling_files(checkpoint_path, config["model_type"], current, current_config)
-        print(f"{checkpoint_path}: modeling files updated")
+        print(f"{checkpoint_path} already uses the current modeling files")
         return
 
     # Previous versions suffixed the model type of text models taken from multimodal ones

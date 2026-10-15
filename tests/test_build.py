@@ -493,18 +493,3 @@ def test_build_moe_has_the_defaults_of_the_command(experts, tmp_path, monkeypatc
     }
     path = build_moe(config, torch_dtype=torch.float32)
     assert json.load(open(os.path.join(path, "config.json")))["num_experts_per_tok"] == 2
-
-
-def test_upgrade_refreshes_the_modeling_files_of_a_current_model(experts, build, tmp_path):
-    import shutil
-
-    from MixtureKit import upgrade_checkpoint
-
-    path = tmp_path / "model"
-    shutil.copytree(build("btx", experts["llama"], "llamabtx"), path)
-    modeling = next(path.glob("modeling_*.py"))
-    current = modeling.read_text()
-    modeling.write_text(current.replace("token_mask", "old_name"))  # an older template
-    upgrade_checkpoint(str(path), "LlamaForCausalLM")
-    assert modeling.read_text() == current
-    assert load(str(path))(input_ids=PROMPT).logits.isfinite().all()

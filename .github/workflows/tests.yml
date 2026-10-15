@@ -17,7 +17,7 @@ jobs:
           - {python: "3.11", transformers: "4.57.6"}
           - {python: "3.12", transformers: "5.0.0"}
           - {python: "3.12", transformers: "5.4.0"}
-          - {python: "3.13", transformers: "5.19.0"}
+          - {python: "3.12", transformers: "5.19.0"}
     name: py${{ matrix.python }} / transformers ${{ matrix.transformers }}
     steps:
       - uses: actions/checkout@v5

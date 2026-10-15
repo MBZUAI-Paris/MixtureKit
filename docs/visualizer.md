@@ -3,7 +3,10 @@
 See **which experts every token is sent to**, layer by layer: whether the experts specialize
 (e.g. one per language or script), and whether a router has collapsed onto one expert.
 
-![The routing of a two-expert Arabic and Latin-script model](../examples/vis_example.png)
+![The routing of a two-expert MoE of Nile 4B models: Latin-script (Arabizi) tokens go to one expert, Arabic-script tokens to the other](../examples/vis_example.png)
+
+An example: a BTX MoE of the Nile 4B Arabic-script and Latin-script experts, built for this
+illustration, with its routers trained briefly (250 steps) on Egyptian chat in both scripts.
 
 ## The app
 

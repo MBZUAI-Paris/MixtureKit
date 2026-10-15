@@ -35,7 +35,7 @@ mixturekit push qwen3moe2x-trained my-org/my-moe           # share it, with a mo
 laptop; training the routers wants a GPU.
 
 <p align="center">
-  <img alt="Token routing of a two-expert model: Arabic-script tokens go to one expert, Latin-script tokens to the other" src="https://raw.githubusercontent.com/MBZUAI-Paris/MixtureKit/main/examples/vis_example.png" width="560">
+  <img alt="Token routing of a two-expert MoE of Nile 4B models: Latin-script (Arabizi) Egyptian tokens go to one expert, Arabic-script tokens to the other" src="https://raw.githubusercontent.com/MBZUAI-Paris/MixtureKit/main/examples/vis_example.png" width="560">
 </p>
 
 **Try it in 15 minutes on a free GPU:** the [Colab notebook](https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb)

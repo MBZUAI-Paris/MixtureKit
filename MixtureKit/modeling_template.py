@@ -32,7 +32,7 @@ BASE_MODEL_CLASS = "__BASE_MODEL_CLASS__"
 # ----------------------------------------------------------------------------------------
 
 
-def switch_load_balancing_loss(router_logits, top_ids, num_experts: int, token_mask=None):
+def switch_load_balancing_loss(router_logits, top_ids, num_experts: int):
     """
     The load balancing loss of Switch Transformers and Mixtral:
     num_experts * sum_i(f_i * P_i), with f_i the fraction of the routing slots sent
@@ -40,31 +40,24 @@ def switch_load_balancing_loss(router_logits, top_ids, num_experts: int, token_m
     The fraction of slots is normalized by top_k, so the loss equals 1 when the load is
     perfectly balanced and grows up to num_experts / top_k when every token is sent to
     the same experts (it is the transformers `load_balancing_loss_func` divided by top_k).
-    token_mask (one value per token, e.g. the attention mask) leaves out the padding tokens.
+    Padding tokens are not masked and count as regular tokens.
     """
     probs = router_logits.reshape(-1, num_experts).softmax(dim=-1, dtype=torch.float)
     top_ids = top_ids.reshape(-1, top_ids.shape[-1])
-    slots = torch.nn.functional.one_hot(top_ids, num_experts).float().mean(dim=1)
-    if token_mask is None:
-        weights = probs.new_ones(probs.shape[0])
-    else:
-        weights = token_mask.reshape(-1).to(probs.device, torch.float)
-    total = weights.sum().clamp(min=1)
-    tokens_per_expert = (slots * weights[:, None]).sum(dim=0) / total
-    prob_per_expert = (probs * weights[:, None]).sum(dim=0) / total
+    slots = torch.nn.functional.one_hot(top_ids, num_experts).float()
+    tokens_per_expert = slots.mean(dim=(0, 1))
+    prob_per_expert = probs.mean(dim=0)
     return num_experts * (tokens_per_expert * prob_per_expert).sum()
 
 
 class RoutedModule(nn.Module):
     """
-    Base of the routed layers: keeps the router choices of the forward pass during
-    training. MixtureKitForCausalLM computes the load balancing loss from them, with the
-    attention mask, and adds it to the training loss inside the autograd graph, so it
-    follows the loss scaling (gradient accumulation, fp16 loss scaling).
+    Base of the routed layers: computes the load balancing loss of the router during
+    training. MixtureKitForCausalLM adds it to the training loss, inside the autograd
+    graph, so it follows the loss scaling (gradient accumulation, fp16 loss scaling).
     """
 
-    # (router logits, chosen experts) of the forward pass
-    router_choices = None
+    aux_loss: Optional[torch.Tensor] = None
     # Weight of this router's loss: alpha averaged over all the routers of the model
     loss_scale: float = 0.0
     # Set by MixtureKitForCausalLM during its forward pass only: the recomputations of the
@@ -72,8 +65,12 @@ class RoutedModule(nn.Module):
     collect_aux_loss: bool = False
 
     def _add_load_balancing_loss(self, output, logits, top_ids):
-        if self.training and self.loss_scale and self.collect_aux_loss:
-            self.router_choices = (logits, top_ids)  # no operation: recomputations match
+        if self.training and self.loss_scale:
+            # Computed in every pass, recomputations included: gradient checkpointing
+            # expects the same operations, but only the forward pass keeps the value
+            loss = self.loss_scale * switch_load_balancing_loss(logits, top_ids, self.num_experts)
+            if self.collect_aux_loss:
+                self.aux_loss = loss
         return output
 
 
@@ -502,8 +499,7 @@ class MixtureKitForCausalLM(_Base):
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None, **kwargs):
         """
         Non-reentrant checkpointing keeps the autograd graph of the load balancing loss,
-        computed from router logits made inside the checkpointed layers (reentrant
-        checkpointing drops it).
+        computed inside the checkpointed layers (reentrant checkpointing drops it).
         """
         gradient_checkpointing_kwargs = dict(gradient_checkpointing_kwargs or {})
         if gradient_checkpointing_kwargs.get("use_reentrant") and self._routed_modules:
@@ -531,24 +527,14 @@ class MixtureKitForCausalLM(_Base):
         try:
             outputs = super().forward(*args, **kwargs)
         finally:
-            # The router choices of this pass. They are not kept on the modules: the model
-            # stays copyable and keeps no graph between steps
-            choices = [(m, m.router_choices) for m in routed if m.router_choices is not None]
+            # The load balancing loss of the routers, computed during training. It is not
+            # kept on the modules: the model stays copyable and keeps no graph between steps
+            aux = [m.aux_loss for m in routed if m.aux_loss is not None]
             for module in routed:
                 module.collect_aux_loss = False
-                module.router_choices = None
-        if not choices:
+                module.aux_loss = None
+        if not aux:
             return outputs
-
-        # The load balancing loss of the routers, over the tokens of the attention mask
-        attention_mask = _forward_argument(args, kwargs, "attention_mask")
-        aux = []
-        for module, (logits, top_ids) in choices:
-            n_tokens = logits.reshape(-1, logits.shape[-1]).shape[0]
-            mask = attention_mask
-            if mask is not None and (mask.dim() != 2 or mask.numel() != n_tokens):
-                mask = None  # not one value per token (e.g. a 4D mask): every token counts
-            aux.append(module.loss_scale * switch_load_balancing_loss(logits, top_ids, module.num_experts, mask))
 
         # aux_loss is the unweighted load balancing loss of this batch; added to the loss,
         # it is weighted like the language modeling loss (see load_balancing_weight)
