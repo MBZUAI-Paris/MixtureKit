@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="MixtureKit logo" src="https://raw.githubusercontent.com/MBZUAI-Paris/MixtureKit/main/logo.png" width="180">
+  <img alt="MixtureKit logo" src="https://raw.githubusercontent.com/MBZUAI-Paris/MixtureKit/main/logo.png" width="150">
 </p>
 
 <h1 align="center">MixtureKit</h1>
