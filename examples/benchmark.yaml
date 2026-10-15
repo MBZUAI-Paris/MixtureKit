@@ -1,5 +1,5 @@
 # The experts against the merged model, with lm-evaluation-harness:
-#   pip install "mixturekit[bench] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+#   pip install "mixturekit[bench]"
 #   mixturekit benchmark examples/benchmark.yaml
 models:
   - {name: Qwen3-0.6B-Base, model_id: Qwen/Qwen3-0.6B-Base}

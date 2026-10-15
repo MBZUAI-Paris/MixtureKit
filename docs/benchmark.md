@@ -6,7 +6,7 @@ library behind the Open LLM Leaderboard, and writes a Markdown table with the pa
 every model (total, and used per token).
 
 ```bash
-pip install "mixturekit[bench] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+pip install "mixturekit[bench]"
 mixturekit benchmark examples/benchmark.yaml
 ```
 

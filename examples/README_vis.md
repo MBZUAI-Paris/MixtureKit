@@ -4,6 +4,6 @@ Moved to the documentation: [Routing visualizer](https://mbzuai-paris.github.io/
 ([source](../docs/visualizer.md)).
 
 ```bash
-pip install "mixturekit[vis] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+pip install "mixturekit[vis]"
 mixturekit visualize models_merge/gemmax
 ```

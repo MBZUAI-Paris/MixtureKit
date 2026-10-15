@@ -11,7 +11,7 @@ illustration, with its routers trained briefly (250 steps) on Egyptian chat in b
 ## The app
 
 ```bash
-pip install "mixturekit[vis] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+pip install "mixturekit[vis]"
 mixturekit visualize models_merge/gemmax                 # a local merged model
 mixturekit visualize my-org/my-moe                       # or the Hub id of a model built with MixtureKit
 ```

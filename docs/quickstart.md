@@ -3,9 +3,9 @@
 ## Install
 
 ```bash
-pip install "mixturekit @ git+https://github.com/MBZUAI-Paris/MixtureKit"            # build and load
-pip install "mixturekit[train] @ git+https://github.com/MBZUAI-Paris/MixtureKit"     # + training (trl, peft, ...)
-pip install "mixturekit[vis] @ git+https://github.com/MBZUAI-Paris/MixtureKit"       # + routing visualizer
+pip install "mixturekit"            # build and load
+pip install "mixturekit[train]"     # + training (trl, peft, ...)
+pip install "mixturekit[vis]"       # + routing visualizer
 ```
 
 Or from a clone: `pip install -e ".[train,vis]"`.

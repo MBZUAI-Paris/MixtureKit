@@ -7,7 +7,7 @@ math, code or language fine-tunes) into a single MoE model, trains the routers t
 experts for every token, and shows which expert every token uses.
 
 ```bash
-pip install "mixturekit[vis] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+pip install "mixturekit[vis]"
 mixturekit build examples/configs/traditional_qwen3.yaml   # merge the experts -> models_merge/qwen3moe2x
 mixturekit train my_training.yaml                          # train the routers -> e.g. qwen3moe2x-trained
 mixturekit visualize qwen3moe2x-trained                    # see which expert every token uses

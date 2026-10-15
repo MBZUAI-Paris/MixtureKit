@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/mixturekit/"><img alt="PyPI" src="https://img.shields.io/pypi/v/mixturekit"></a>
   <a href="https://github.com/MBZUAI-Paris/MixtureKit/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/MBZUAI-Paris/MixtureKit/actions/workflows/tests.yml/badge.svg"></a>
   <a href="https://mbzuai-paris.github.io/MixtureKit/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-blue"></a>
   <a href="https://arxiv.org/abs/2512.12121"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2512.12121-b31b1b"></a>
@@ -22,7 +23,7 @@ language. MixtureKit composes them into a single Mixture-of-Experts model whose 
 learn, token by token, which expert to use, and shows you what they learned.
 
 ```bash
-pip install "mixturekit[vis] @ git+https://github.com/MBZUAI-Paris/MixtureKit"
+pip install "mixturekit[vis]"
 
 mixturekit build examples/configs/traditional_qwen3.yaml   # merge the experts -> models_merge/qwen3moe2x
 mixturekit train my_training.yaml                          # train the routers -> e.g. qwen3moe2x-trained
