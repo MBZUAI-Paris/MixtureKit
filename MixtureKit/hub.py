@@ -15,11 +15,17 @@ import yaml
 from safetensors import safe_open
 
 REPOSITORY = "https://github.com/MBZUAI-Paris/MixtureKit"
-CITATION = """@article{chamma2025mixturekit,
-  title={MixtureKit: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models},
-  author={Chamma, Ahmad and Herraoui, Omar El and Shang, Guokan},
-  journal={arXiv preprint arXiv:2512.12121},
-  year={2025}
+CITATION = """@inproceedings{chamma-etal-2026-mixturekit,
+  title = "{M}ixture{K}it: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models",
+  author = "Chamma, Ahmad and El Herraoui, Omar and Shang, Guokan",
+  booktitle = "Proceedings of the 64th Annual Meeting of the {A}ssociation for {C}omputational {L}inguistics (Volume 3: System Demonstrations)",
+  month = jul,
+  year = "2026",
+  address = "San Diego, California, United States",
+  publisher = "Association for Computational Linguistics",
+  url = "https://aclanthology.org/2026.acl-demo.15/",
+  doi = "10.18653/v1/2026.acl-demo.15",
+  pages = "148--156"
 }"""
 
 METHODS = {

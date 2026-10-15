@@ -13,6 +13,7 @@
   <a href="https://pypi.org/project/mixturekit/"><img alt="PyPI" src="https://img.shields.io/pypi/v/mixturekit"></a>
   <a href="https://github.com/MBZUAI-Paris/MixtureKit/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/MBZUAI-Paris/MixtureKit/actions/workflows/tests.yml/badge.svg"></a>
   <a href="https://mbzuai-paris.github.io/MixtureKit/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-blue"></a>
+  <a href="https://aclanthology.org/2026.acl-demo.15/"><img alt="ACL 2026 Demo" src="https://img.shields.io/badge/ACL%202026-System%20Demonstrations-red"></a>
   <a href="https://arxiv.org/abs/2512.12121"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2512.12121-b31b1b"></a>
   <a href="https://github.com/MBZUAI-Paris/MixtureKit/blob/main/LICENSE"><img alt="License: BSD-3-Clause" src="https://img.shields.io/badge/license-BSD--3--Clause-green"></a>
   <a href="https://colab.research.google.com/github/MBZUAI-Paris/MixtureKit/blob/main/examples/build_your_own_moe.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"></a>
@@ -135,14 +136,20 @@ Issues and pull requests are welcome: see [CONTRIBUTING.md](https://github.com/M
 
 ## Citation
 
-If MixtureKit is useful in your work, please cite the [paper](https://arxiv.org/abs/2512.12121):
+MixtureKit was published at **ACL 2026 (System Demonstrations)**. If it is useful in your work, please cite the [paper](https://aclanthology.org/2026.acl-demo.15/):
 
 ```bibtex
-@article{chamma2025mixturekit,
-  title={MixtureKit: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models},
-  author={Chamma, Ahmad and Herraoui, Omar El and Shang, Guokan},
-  journal={arXiv preprint arXiv:2512.12121},
-  year={2025}
+@inproceedings{chamma-etal-2026-mixturekit,
+  title = "{M}ixture{K}it: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models",
+  author = "Chamma, Ahmad and El Herraoui, Omar and Shang, Guokan",
+  booktitle = "Proceedings of the 64th Annual Meeting of the {A}ssociation for {C}omputational {L}inguistics (Volume 3: System Demonstrations)",
+  month = jul,
+  year = "2026",
+  address = "San Diego, California, United States",
+  publisher = "Association for Computational Linguistics",
+  url = "https://aclanthology.org/2026.acl-demo.15/",
+  doi = "10.18653/v1/2026.acl-demo.15",
+  pages = "148--156"
 }
 ```
 

@@ -1,0 +1,44 @@
+cff-version: 1.2.0
+message: "If you use MixtureKit, please cite the paper below."
+title: "MixtureKit"
+abstract: "A general framework for composing, training, and visualizing Mixture-of-Experts models from pretrained Hugging Face checkpoints (BTX, BTS and traditional MoE)."
+type: software
+authors:
+  - family-names: Chamma
+    given-names: Ahmad
+  - family-names: El Herraoui
+    given-names: Omar
+  - family-names: Shang
+    given-names: Guokan
+license: BSD-3-Clause
+repository-code: "https://github.com/MBZUAI-Paris/MixtureKit"
+url: "https://mbzuai-paris.github.io/MixtureKit/"
+keywords:
+  - mixture-of-experts
+  - model merging
+  - branch-train-mix
+  - branch-train-stitch
+  - large language models
+preferred-citation:
+  type: conference-paper
+  title: "MixtureKit: A General Framework for Composing, Training, and Visualizing Mixture-of-Experts Models"
+  authors:
+    - family-names: Chamma
+      given-names: Ahmad
+    - family-names: El Herraoui
+      given-names: Omar
+    - family-names: Shang
+      given-names: Guokan
+  collection-title: "Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations)"
+  conference:
+    name: "ACL 2026"
+    city: "San Diego"
+    country: US
+  publisher:
+    name: "Association for Computational Linguistics"
+  year: 2026
+  month: 7
+  start: 148
+  end: 156
+  doi: "10.18653/v1/2026.acl-demo.15"
+  url: "https://aclanthology.org/2026.acl-demo.15/"
